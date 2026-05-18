@@ -5,6 +5,8 @@ const {
   inferTools,
   attribute,
   detectTools,
+  gatherIdbHints,
+  KNOWN_TOOL_NAMES,
 } = require('../src/js/detect');
 
 test('parseAnnouncements: valid single announcement', () => {
@@ -217,6 +219,43 @@ test('detectTools: gcu:tool:* keys never leak into unattributed', () => {
   };
   const { unattributed } = detectTools(lsEntries, observed);
   assert.deepEqual(unattributed.localStorageKeys, []);
+});
+
+test('gatherIdbHints: empty LS → just KNOWN_TOOL_NAMES', () => {
+  const hints = gatherIdbHints([]);
+  for (const name of KNOWN_TOOL_NAMES) {
+    assert.ok(hints.includes(name), `missing ${name}`);
+  }
+  assert.equal(hints.length, KNOWN_TOOL_NAMES.length);
+});
+
+test('gatherIdbHints: announced IDB names get merged in', () => {
+  const ls = [
+    ['gcu:tool:ep', JSON.stringify({ name: 'ep', storageKeys: { idb: ['ep', 'ep-cache'] } })],
+    ['gcu:tool:custom', JSON.stringify({ name: 'custom', storageKeys: { idb: ['custom-db'] } })],
+  ];
+  const hints = gatherIdbHints(ls);
+  assert.ok(hints.includes('ep'));
+  assert.ok(hints.includes('ep-cache'));
+  assert.ok(hints.includes('custom-db'));
+  for (const name of KNOWN_TOOL_NAMES) {
+    assert.ok(hints.includes(name));
+  }
+});
+
+test('gatherIdbHints: dedupes overlap between announced and known names', () => {
+  const ls = [['gcu:tool:ep', JSON.stringify({ name: 'ep', storageKeys: { idb: ['ep'] } })]];
+  const hints = gatherIdbHints(ls);
+  assert.equal(hints.filter((n) => n === 'ep').length, 1);
+});
+
+test('gatherIdbHints: ignores announcements without storageKeys.idb', () => {
+  const ls = [
+    ['gcu:tool:ep', JSON.stringify({ name: 'ep' })],
+    ['gcu:tool:calque', JSON.stringify({ name: 'calque', storageKeys: {} })],
+  ];
+  const hints = gatherIdbHints(ls);
+  assert.equal(hints.length, KNOWN_TOOL_NAMES.length);
 });
 
 test('detectTools: announcement wins over heuristic for the same tool', () => {

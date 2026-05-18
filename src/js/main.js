@@ -19,7 +19,12 @@ async function boot() {
 }
 
 async function loadState() {
-  const inspectResult = await inspectOrigin();
+  // Pre-read localStorage so we can compute IDB hints before inspectOrigin
+  // runs. The hints are only consumed by the listIdbs fallback path on
+  // browsers without indexedDB.databases() (older Safari, some WebViews).
+  const lsForHints = listLocalStorage();
+  const idbHints = gatherIdbHints(lsForHints);
+  const inspectResult = await inspectOrigin({ idbHints });
   const detectResult = detectTools(inspectResult.localStorage, toObserved(inspectResult));
   return {
     origin: typeof location !== 'undefined' ? location.origin : '',

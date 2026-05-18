@@ -11,10 +11,10 @@
 // missing we return []. Callers that want pre-2023 Safari / older WebView
 // coverage can fall back to opening names from gcu:tool announcements.
 
-async function inspectOrigin() {
+async function inspectOrigin({ idbHints = [] } = {}) {
   const [cacheList, idbList, ls, ss, swList, estimate] = await Promise.all([
     listCaches(),
-    listIdbs(),
+    listIdbs(idbHints),
     Promise.resolve(listLocalStorage()),
     Promise.resolve(listSessionStorage()),
     listServiceWorkers(),
@@ -46,9 +46,13 @@ async function listCaches() {
   return results;
 }
 
-async function listIdbs() {
+async function listIdbs(hints = []) {
   if (typeof indexedDB === 'undefined') return [];
-  if (typeof indexedDB.databases !== 'function') return [];
+  if (typeof indexedDB.databases === 'function') return enumerateIdbsNative();
+  return enumerateIdbsByHints(hints);
+}
+
+async function enumerateIdbsNative() {
   const dbs = await indexedDB.databases();
   const results = [];
   for (const meta of dbs) {
@@ -66,6 +70,56 @@ async function listIdbs() {
     }
   }
   return results;
+}
+
+// Fallback for browsers without indexedDB.databases() (older Safari, some
+// WebViews). Probes each candidate name; uses onupgradeneeded(oldVersion=0)
+// to detect when we accidentally created an empty DB, then deletes it so
+// the probe doesn't pollute the user's origin.
+async function enumerateIdbsByHints(names) {
+  const results = [];
+  for (const name of names) {
+    const result = await openIdbIfExists(name);
+    if (result) results.push(result);
+  }
+  return results;
+}
+
+function openIdbIfExists(name) {
+  return new Promise((resolve) => {
+    let createdByUs = false;
+    const req = indexedDB.open(name);
+    req.onupgradeneeded = (e) => {
+      if (e.oldVersion === 0) createdByUs = true;
+    };
+    req.onsuccess = async () => {
+      const db = req.result;
+      if (createdByUs) {
+        db.close();
+        await new Promise((res) => {
+          const del = indexedDB.deleteDatabase(name);
+          del.onsuccess = () => res();
+          del.onerror = () => res();
+          del.onblocked = () => res();
+        });
+        resolve(null);
+        return;
+      }
+      try {
+        const stores = [];
+        for (const storeName of db.objectStoreNames) {
+          stores.push({ name: storeName, recordCount: await countRecords(db, storeName) });
+        }
+        db.close();
+        resolve({ name, version: db.version, stores });
+      } catch (e) {
+        db.close();
+        resolve({ name, version: db.version, stores: [], error: String(e) });
+      }
+    };
+    req.onerror = () => resolve(null);
+    req.onblocked = () => resolve(null);
+  });
 }
 
 function openIdb(name) {

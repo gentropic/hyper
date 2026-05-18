@@ -148,6 +148,16 @@ function attribute(tools, observed) {
   };
 }
 
+// Collect IDB names to probe when indexedDB.databases() isn't available
+// (older Safari, some WebViews). Combines announced IDBs from gcu:tool:*
+// markers with KNOWN_TOOL_NAMES as a best-effort fallback for tools that
+// haven't shipped the announcement yet.
+function gatherIdbHints(localStorageEntries) {
+  const { tools } = parseAnnouncements(localStorageEntries);
+  const announced = tools.flatMap((t) => (t.storageKeys && t.storageKeys.idb) || []);
+  return [...new Set([...announced, ...KNOWN_TOOL_NAMES])];
+}
+
 function detectTools(localStorageEntries, observed) {
   const { tools: announced, malformed } = parseAnnouncements(localStorageEntries);
   // Strip gcu:tool:* keys from observed LS — they are hyper's own metadata,
@@ -174,5 +184,6 @@ if (typeof module !== 'undefined') {
     inferTools,
     attribute,
     detectTools,
+    gatherIdbHints,
   };
 }
