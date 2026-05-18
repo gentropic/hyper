@@ -3,6 +3,9 @@
 
 let currentState = null;
 let busy = false;
+// Opt-in cache byte totals. Cleared on every boot() because cache contents
+// may have changed; preserved across renders within a single boot.
+let cacheSizes = new Map();
 
 async function boot() {
   const root = document.getElementById('app');
@@ -11,7 +14,9 @@ async function boot() {
     root.addEventListener('click', onActionClick);
   }
   try {
+    cacheSizes = new Map();
     currentState = await loadState();
+    currentState.cacheSizes = cacheSizes;
     renderApp(currentState, root);
   } catch (err) {
     showError(root, err);
@@ -116,6 +121,24 @@ async function dispatch(action, tool) {
       if (!ok) return false;
       await nukeOrigin(currentState.inspectResult);
       return true;
+    }
+    case 'compute-cache-sizes': {
+      if (!tool) return false;
+      const names = tool.storage.cacheNames || [];
+      if (names.length === 0) return false;
+      const sizes = await bytesForCaches(names);
+      for (const [k, v] of sizes) cacheSizes.set(k, v);
+      // Re-render in place — no need to re-inspect the origin.
+      renderApp(currentState, document.getElementById('app'));
+      return false;
+    }
+    case 'compute-unattributed-cache-sizes': {
+      const names = currentState.detectResult.unattributed.cacheNames || [];
+      if (names.length === 0) return false;
+      const sizes = await bytesForCaches(names);
+      for (const [k, v] of sizes) cacheSizes.set(k, v);
+      renderApp(currentState, document.getElementById('app'));
+      return false;
     }
     case 'export-tool': {
       if (!tool) return false;

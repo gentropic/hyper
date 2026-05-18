@@ -61,9 +61,66 @@ function normalizeScope(scope) {
   try { return new URL(scope).pathname; } catch { return scope; }
 }
 
-function decorateTool(tool, inspectResult) {
+// Same shape as decorateTool for the size fields, so renderSizeBar accepts
+// either. The "name" field is the synthetic '__unattributed__' sentinel,
+// not displayed — main.js looks at the action name to know which compute
+// path to take, not the tool name.
+function decorateUnattributed(unattributed, inspectResult, cacheSizes) {
+  const lsMap = new Map(inspectResult.localStorage);
+  let lsBytes = 0;
+  for (const k of unattributed.localStorageKeys || []) {
+    const v = lsMap.get(k);
+    if (v != null) lsBytes += (k.length + v.length) * 2;
+  }
+  // SessionStorage is entirely unattributed (no tool announces SS ownership).
+  for (const [k, v] of inspectResult.sessionStorage || []) {
+    lsBytes += (k ? k.length : 0) * 2;
+    lsBytes += (v ? v.length : 0) * 2;
+  }
+
+  const cacheNames = unattributed.cacheNames || [];
+  let cacheBytes = 0;
+  const hasCacheSizes = cacheNames.length === 0
+    || (cacheSizes != null && cacheNames.every((n) => cacheSizes.has(n)));
+  if (cacheSizes) {
+    for (const n of cacheNames) {
+      const b = cacheSizes.get(n);
+      if (typeof b === 'number') cacheBytes += b;
+    }
+  }
+
+  return {
+    name: '__unattributed__',
+    cacheCount: cacheNames.length,
+    cacheBytes,
+    hasCacheSizes,
+    lsBytes,
+  };
+}
+
+// Pure: build the bar segment data for a decorated tool, scaled against
+// maxBytes (the largest total across all tools+unattributed, used so bars
+// are visually comparable). Cache segment is omitted unless we have the
+// data (decorated.hasCacheSizes), since drawing a guessed-size bar would
+// mislead the user.
+function buildBarSegments(decorated, maxBytes) {
+  const segments = [];
+  if (decorated.hasCacheSizes && decorated.cacheBytes > 0) {
+    segments.push({ label: 'cache', bytes: decorated.cacheBytes });
+  }
+  if (decorated.lsBytes > 0) {
+    segments.push({ label: 'ls', bytes: decorated.lsBytes });
+  }
+  const total = segments.reduce((s, x) => s + x.bytes, 0);
+  const ref = maxBytes > 0 ? maxBytes : 1;
+  for (const seg of segments) seg.percent = (seg.bytes / ref) * 100;
+  return { segments, totalBytes: total };
+}
+
+function decorateTool(tool, inspectResult, cacheSizes) {
   const cacheMap = new Map(inspectResult.caches.map((c) => [c.name, c]));
   const idbMap = new Map(inspectResult.idbs.map((i) => [i.name, i]));
+  const lsMap = new Map(inspectResult.localStorage);
 
   const cacheEntries = (tool.storage.cacheNames || [])
     .map((n) => cacheMap.get(n))
@@ -75,16 +132,36 @@ function decorateTool(tool, inspectResult) {
     .filter(Boolean)
     .reduce((s, i) => s + i.stores.reduce((a, st) => a + st.recordCount, 0), 0);
 
+  let lsBytes = 0;
+  for (const k of tool.storage.localStorageKeys || []) {
+    const v = lsMap.get(k);
+    if (v != null) lsBytes += (k.length + v.length) * 2;
+  }
+
+  const cacheNames = tool.storage.cacheNames || [];
+  let cacheBytes = 0;
+  const hasCacheSizes = cacheNames.length === 0
+    || (cacheSizes != null && cacheNames.every((n) => cacheSizes.has(n)));
+  if (cacheSizes) {
+    for (const n of cacheNames) {
+      const b = cacheSizes.get(n);
+      if (typeof b === 'number') cacheBytes += b;
+    }
+  }
+
   return {
     name: tool.name,
     displayName: (tool.announcement && tool.announcement.displayName) || tool.name,
     version: tool.announcement ? (tool.announcement.version || null) : null,
     source: tool.source,
-    cacheCount: (tool.storage.cacheNames || []).length,
+    cacheCount: cacheNames.length,
     cacheEntries,
+    cacheBytes,
+    hasCacheSizes,
     idbCount: (tool.storage.idbNames || []).length,
     idbRecords,
     localStorageCount: (tool.storage.localStorageKeys || []).length,
+    lsBytes,
     swCount: (tool.storage.swScopes || []).length,
   };
 }
@@ -93,11 +170,28 @@ function decorateTool(tool, inspectResult) {
 
 function renderApp(state, root) {
   root.replaceChildren();
+
+  // Decorate tools + unattributed once so bars across the whole page share
+  // the same maxBytes scale.
+  const decoratedTools = state.detectResult.tools.map((t) => ({
+    tool: t,
+    d: decorateTool(t, state.inspectResult, state.cacheSizes),
+  }));
+  const decoratedUnattributed = decorateUnattributed(
+    state.detectResult.unattributed, state.inspectResult, state.cacheSizes,
+  );
+  const maxBytes = Math.max(1, ...[
+    ...decoratedTools.map(({ d }) => d.cacheBytes + d.lsBytes),
+    decoratedUnattributed.cacheBytes + decoratedUnattributed.lsBytes,
+  ]);
+
   root.appendChild(renderHeader(state));
-  root.appendChild(renderToolList(state));
+  root.appendChild(renderToolList(state, decoratedTools, maxBytes));
   const ssCount = state.inspectResult.sessionStorage.length;
   if (hasUnattributed(state.detectResult.unattributed) || ssCount > 0) {
-    root.appendChild(renderUnattributed(state.detectResult.unattributed, state.inspectResult));
+    root.appendChild(renderUnattributed(
+      state.detectResult.unattributed, state.inspectResult, decoratedUnattributed, maxBytes,
+    ));
   }
   if (state.detectResult.malformed.length) {
     root.appendChild(renderMalformed(state.detectResult.malformed));
@@ -129,25 +223,28 @@ function summaryStats(inspectResult, detectResult) {
   };
 }
 
-function renderToolList(state) {
+function renderToolList(state, decoratedTools, maxBytes) {
   const list = el('section', { class: 'hyper-tools' });
   if (state.detectResult.tools.length === 0) {
     list.appendChild(el('p', { class: 'muted', text: 'No GCU tools detected on this origin.' }));
     return list;
   }
-  for (const tool of state.detectResult.tools) {
-    list.appendChild(renderToolRow(decorateTool(tool, state.inspectResult), tool, state.inspectResult));
+  for (const { tool, d } of decoratedTools) {
+    list.appendChild(renderToolRow(d, tool, state.inspectResult, maxBytes));
   }
   return list;
 }
 
-function renderToolRow(t, tool, inspectResult) {
+function renderToolRow(t, tool, inspectResult, maxBytes) {
   const row = el('article', { class: `hyper-tool hyper-tool--${t.source}`, data: { tool: t.name } });
   const head = el('div', { class: 'hyper-tool__head' });
   head.appendChild(el('span', { class: 'hyper-tool__name', text: t.displayName }));
   if (t.version) head.appendChild(el('span', { class: 'hyper-tool__version', text: `v${t.version}` }));
   if (t.source === 'heuristic') head.appendChild(el('span', { class: 'hyper-tool__tag', text: 'inferred' }));
   row.appendChild(head);
+
+  const bar = renderSizeBar(t, maxBytes);
+  if (bar) row.appendChild(bar);
 
   const stats = el('div', { class: 'hyper-tool__stats' });
   stats.appendChild(el('span', { text: `${t.cacheCount} cache${t.cacheCount === 1 ? '' : 's'} (${t.cacheEntries} entries)` }));
@@ -164,6 +261,43 @@ function renderToolRow(t, tool, inspectResult) {
 
   row.appendChild(renderToolDetails(buildToolDetails(tool, inspectResult)));
   return row;
+}
+
+// Returns null when there's nothing meaningful to render (no caches → no
+// point comparing). Otherwise either a "compute me" placeholder or the
+// actual bar with measured sizes.
+//
+// options.computeAction selects which dispatch case fires when the user
+// clicks Compute (tools use 'compute-cache-sizes' with a tool name;
+// unattributed uses 'compute-unattributed-cache-sizes' with no name).
+function renderSizeBar(decorated, maxBytes, options = {}) {
+  if (decorated.cacheCount === 0) return null;
+
+  const computeAction = options.computeAction || 'compute-cache-sizes';
+  const targetName = 'targetName' in options ? options.targetName : decorated.name;
+
+  if (!decorated.hasCacheSizes) {
+    const wrap = el('div', { class: 'hyper-bar-wrap hyper-bar-wrap--placeholder' });
+    wrap.appendChild(el('span', {
+      class: 'hyper-bar-label',
+      text: `${decorated.cacheCount} cache${decorated.cacheCount === 1 ? '' : 's'} — size not measured`,
+    }));
+    wrap.appendChild(actionButton('Compute', computeAction, targetName));
+    return wrap;
+  }
+
+  const bar = buildBarSegments(decorated, maxBytes);
+  const wrap = el('div', { class: 'hyper-bar-wrap' });
+  const track = el('div', { class: 'hyper-bar' });
+  for (const seg of bar.segments) {
+    track.appendChild(el('div', {
+      class: `hyper-bar__seg hyper-bar__seg--${seg.label}`,
+      attrs: { style: `width: ${seg.percent.toFixed(2)}%`, title: `${seg.label}: ${formatBytes(seg.bytes)}` },
+    }));
+  }
+  wrap.appendChild(track);
+  wrap.appendChild(el('div', { class: 'hyper-bar-label', text: `${formatBytes(bar.totalBytes)} total` }));
+  return wrap;
 }
 
 function renderKVSection(label, entries) {
@@ -232,7 +366,7 @@ function renderToolDetails(details) {
   return wrap;
 }
 
-function renderUnattributed(unattributed, inspectResult) {
+function renderUnattributed(unattributed, inspectResult, decoratedUnattributed, maxBytes) {
   const section = el('section', { class: 'hyper-unattributed' });
   section.appendChild(el('h2', { text: 'Unattributed storage' }));
   const ssCount = inspectResult.sessionStorage.length;
@@ -244,6 +378,12 @@ function renderUnattributed(unattributed, inspectResult) {
   ];
   if (ssCount > 0) lines.push(`${ssCount} SS keys`);
   section.appendChild(el('p', { text: lines.join(' · ') }));
+
+  const bar = renderSizeBar(decoratedUnattributed, maxBytes, {
+    computeAction: 'compute-unattributed-cache-sizes',
+    targetName: null,
+  });
+  if (bar) section.appendChild(bar);
 
   const actions = el('div', { class: 'hyper-tool__actions' });
   actions.appendChild(actionButton('Export', 'export-unattributed'));
@@ -403,6 +543,8 @@ if (typeof module !== 'undefined') {
   module.exports = {
     formatBytes,
     decorateTool,
+    decorateUnattributed,
+    buildBarSegments,
     buildToolDetails,
     buildUnattributedDetails,
     summaryStats,

@@ -12,6 +12,9 @@ const {
   distinctHosts,
   summarizeCache,
   summarizeOrigin,
+  bytesForLocalStorage,
+  bytesForSessionStorage,
+  bytesForCache,
 } = require('../src/js/inspect');
 
 // --- Graceful degradation when browser globals are missing (node default) ---
@@ -133,6 +136,33 @@ test('summarizeOrigin: aggregates totals across categories', () => {
   assert.equal(summary.swCount, 1);
   assert.equal(summary.quotaUsed, 1234);
   assert.equal(summary.quotaTotal, 5678);
+});
+
+test('bytesForLocalStorage: counts UTF-16 (2 bytes per char) for keys + values', () => {
+  // "ab"(2) + "cd"(2) = 4 chars × 2 = 8 bytes
+  assert.equal(bytesForLocalStorage([['ab', 'cd']]), 8);
+});
+
+test('bytesForLocalStorage: sums across multiple entries', () => {
+  assert.equal(bytesForLocalStorage([['a', '1'], ['bb', '22']]), (1 + 1 + 2 + 2) * 2);
+});
+
+test('bytesForLocalStorage: empty input → 0', () => {
+  assert.equal(bytesForLocalStorage([]), 0);
+  assert.equal(bytesForLocalStorage(null), 0);
+  assert.equal(bytesForLocalStorage(undefined), 0);
+});
+
+test('bytesForLocalStorage: null/undefined value treated as empty', () => {
+  assert.equal(bytesForLocalStorage([['key', null]]), 6); // 3 chars × 2
+});
+
+test('bytesForSessionStorage: behaves identically to localStorage', () => {
+  assert.equal(bytesForSessionStorage([['x', 'y']]), 4);
+});
+
+test('bytesForCache: returns 0 when caches global is missing', async () => {
+  assert.equal(await bytesForCache('anything'), 0);
 });
 
 test('summarizeOrigin: missing estimate → null quotas', () => {

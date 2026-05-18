@@ -165,6 +165,43 @@ h2 {
   background: currentColor;
 }
 
+.hyper-bar-wrap {
+  margin: 0.3rem 0 0.6rem;
+}
+.hyper-bar-wrap--placeholder {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.hyper-bar {
+  display: flex;
+  height: 6px;
+  background: var(--sw-bg-deep);
+  border-radius: var(--sw-radius);
+  overflow: hidden;
+  margin-bottom: 0.25rem;
+}
+.hyper-bar__seg { height: 100%; }
+.hyper-bar__seg--cache { background: var(--sw-text-soft); }
+.hyper-bar__seg--ls    { background: var(--sw-text-mid); }
+
+.hyper-bar-label {
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  color: var(--sw-text-soft);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+/* Compact "Compute" button styled to fit inline with the bar label */
+.hyper-bar-label .hyper-btn {
+  padding: 0.15rem 0.5rem;
+  min-height: 0;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+}
+
 .hyper-tool__stats {
   display: flex;
   flex-wrap: wrap;

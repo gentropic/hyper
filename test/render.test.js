@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const {
   formatBytes,
   decorateTool,
+  decorateUnattributed,
+  buildBarSegments,
   buildToolDetails,
   buildUnattributedDetails,
   summaryStats,
@@ -83,6 +85,148 @@ test('decorateTool: heuristic tool with no announcement', () => {
   assert.equal(d.version, null);
   assert.equal(d.cacheEntries, 12);
   assert.equal(d.idbRecords, 4);
+});
+
+test('decorateTool: lsBytes computed from actual LS values (UTF-16)', () => {
+  const tool = {
+    name: 'ep', source: 'announcement', announcement: { name: 'ep' },
+    storage: { cacheNames: [], idbNames: [], localStorageKeys: ['ep:a', 'ep:b'], swScopes: [] },
+  };
+  const inspectResult = {
+    caches: [], idbs: [],
+    localStorage: [['ep:a', 'XX'], ['ep:b', 'YYYY'], ['unrelated', 'ignored']],
+  };
+  const d = decorateTool(tool, inspectResult, null);
+  // ('ep:a'.len + 'XX'.len + 'ep:b'.len + 'YYYY'.len) * 2 = (4+2+4+4)*2 = 28
+  assert.equal(d.lsBytes, 28);
+});
+
+test('decorateTool: no cacheSizes → cacheBytes=0, hasCacheSizes=false when caches exist', () => {
+  const tool = {
+    name: 'ep', source: 'announcement', announcement: { name: 'ep' },
+    storage: { cacheNames: ['ep-shell'], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const d = decorateTool(tool, { caches: [{ name: 'ep-shell', entryCount: 1 }], idbs: [], localStorage: [] }, null);
+  assert.equal(d.cacheBytes, 0);
+  assert.equal(d.hasCacheSizes, false);
+});
+
+test('decorateTool: tool with no caches → hasCacheSizes=true vacuously', () => {
+  const tool = {
+    name: 'ep', source: 'announcement', announcement: { name: 'ep' },
+    storage: { cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const d = decorateTool(tool, { caches: [], idbs: [], localStorage: [] }, null);
+  assert.equal(d.hasCacheSizes, true);
+});
+
+test('decorateTool: cacheSizes covering all caches → cacheBytes summed, hasCacheSizes=true', () => {
+  const tool = {
+    name: 'ep', source: 'announcement', announcement: { name: 'ep' },
+    storage: { cacheNames: ['a', 'b'], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const sizes = new Map([['a', 1024], ['b', 2048]]);
+  const d = decorateTool(tool, { caches: [], idbs: [], localStorage: [] }, sizes);
+  assert.equal(d.cacheBytes, 3072);
+  assert.equal(d.hasCacheSizes, true);
+});
+
+test('decorateTool: cacheSizes partial → hasCacheSizes=false, sums only known', () => {
+  const tool = {
+    name: 'ep', source: 'announcement', announcement: { name: 'ep' },
+    storage: { cacheNames: ['a', 'b'], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const sizes = new Map([['a', 100]]);
+  const d = decorateTool(tool, { caches: [], idbs: [], localStorage: [] }, sizes);
+  assert.equal(d.cacheBytes, 100);
+  assert.equal(d.hasCacheSizes, false);
+});
+
+test('decorateTool: cacheSizes with null value (uncomputable) skipped from sum', () => {
+  const tool = {
+    name: 'ep', source: 'announcement', announcement: { name: 'ep' },
+    storage: { cacheNames: ['a', 'b'], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const sizes = new Map([['a', 100], ['b', null]]);
+  const d = decorateTool(tool, { caches: [], idbs: [], localStorage: [] }, sizes);
+  assert.equal(d.cacheBytes, 100);
+  // hasCacheSizes is true because we tried both — null still counts as "we tried"
+  assert.equal(d.hasCacheSizes, true);
+});
+
+test('buildBarSegments: cache + LS segments scaled to maxBytes', () => {
+  const d = { cacheBytes: 1000, lsBytes: 200, hasCacheSizes: true };
+  const r = buildBarSegments(d, 2000);
+  assert.equal(r.totalBytes, 1200);
+  assert.equal(r.segments.length, 2);
+  assert.equal(r.segments[0].label, 'cache');
+  assert.equal(r.segments[0].percent, 50);
+  assert.equal(r.segments[1].label, 'ls');
+  assert.equal(r.segments[1].percent, 10);
+});
+
+test('buildBarSegments: cache segment omitted when sizes not computed', () => {
+  const d = { cacheBytes: 0, lsBytes: 100, hasCacheSizes: false };
+  const r = buildBarSegments(d, 1000);
+  assert.equal(r.segments.length, 1);
+  assert.equal(r.segments[0].label, 'ls');
+  assert.equal(r.totalBytes, 100);
+});
+
+test('buildBarSegments: zero bytes everywhere → empty segments', () => {
+  const r = buildBarSegments({ cacheBytes: 0, lsBytes: 0, hasCacheSizes: true }, 1000);
+  assert.deepEqual(r.segments, []);
+  assert.equal(r.totalBytes, 0);
+});
+
+test('buildBarSegments: maxBytes=0 does not divide by zero', () => {
+  const r = buildBarSegments({ cacheBytes: 0, lsBytes: 10, hasCacheSizes: true }, 0);
+  assert.equal(r.segments[0].percent, 1000); // 10/1 * 100; ref clamped to 1
+});
+
+test('decorateUnattributed: lsBytes includes own LS keys + all sessionStorage', () => {
+  const u = { cacheNames: [], idbNames: [], localStorageKeys: ['stray'], swScopes: [] };
+  const inspectResult = {
+    caches: [], idbs: [],
+    localStorage: [['stray', 'AAAA'], ['unrelated', 'X']], // only 'stray' matches
+    sessionStorage: [['s', 'YY']],
+  };
+  const d = decorateUnattributed(u, inspectResult, null);
+  // 'stray'(5) + 'AAAA'(4) + 's'(1) + 'YY'(2) = 12 chars × 2 = 24
+  assert.equal(d.lsBytes, 24);
+  assert.equal(d.cacheCount, 0);
+  assert.equal(d.hasCacheSizes, true);
+  assert.equal(d.cacheBytes, 0);
+});
+
+test('decorateUnattributed: no caches → hasCacheSizes=true vacuously', () => {
+  const d = decorateUnattributed(
+    { cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] },
+    { caches: [], idbs: [], localStorage: [], sessionStorage: [] },
+    null,
+  );
+  assert.equal(d.hasCacheSizes, true);
+  assert.equal(d.cacheCount, 0);
+});
+
+test('decorateUnattributed: caches present, no sizes Map → hasCacheSizes=false', () => {
+  const d = decorateUnattributed(
+    { cacheNames: ['stray-cache'], idbNames: [], localStorageKeys: [], swScopes: [] },
+    { caches: [], idbs: [], localStorage: [], sessionStorage: [] },
+    null,
+  );
+  assert.equal(d.hasCacheSizes, false);
+  assert.equal(d.cacheCount, 1);
+});
+
+test('decorateUnattributed: sizes map covering all caches → bytes summed', () => {
+  const d = decorateUnattributed(
+    { cacheNames: ['a', 'b'], idbNames: [], localStorageKeys: [], swScopes: [] },
+    { caches: [], idbs: [], localStorage: [], sessionStorage: [] },
+    new Map([['a', 1000], ['b', 500]]),
+  );
+  assert.equal(d.hasCacheSizes, true);
+  assert.equal(d.cacheBytes, 1500);
 });
 
 test('decorateTool: missing inspect metadata is treated as zero', () => {

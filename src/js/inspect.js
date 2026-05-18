@@ -177,6 +177,58 @@ async function getQuotaEstimate() {
   return await navigator.storage.estimate();
 }
 
+// --- Size helpers --------------------------------------------------------
+//
+// Cheap-and-pure: LS / SS byte totals are derived from string lengths
+// (UTF-16, 2 bytes per char). Run on every load.
+//
+// Expensive-and-async: cache byte totals require fetching every Response
+// body. Opt-in only — main.js triggers via "compute sizes" action; default
+// load skips it to preserve hyper's escape-hatch fast-paint property.
+
+function bytesForLocalStorage(entries) {
+  return sumStringBytes(entries);
+}
+
+function bytesForSessionStorage(entries) {
+  return sumStringBytes(entries);
+}
+
+function sumStringBytes(entries) {
+  let total = 0;
+  for (const [k, v] of entries || []) {
+    total += (k ? k.length : 0) * 2;
+    total += (v ? v.length : 0) * 2;
+  }
+  return total;
+}
+
+async function bytesForCache(name) {
+  if (typeof caches === 'undefined') return 0;
+  const cache = await caches.open(name);
+  const keys = await cache.keys();
+  let total = 0;
+  for (const req of keys) {
+    const res = await cache.match(req);
+    if (!res) continue;
+    const blob = await res.blob();
+    total += blob.size;
+  }
+  return total;
+}
+
+async function bytesForCaches(names) {
+  const out = new Map();
+  for (const name of names) {
+    try {
+      out.set(name, await bytesForCache(name));
+    } catch {
+      out.set(name, null); // null = could not compute (e.g. opaque response)
+    }
+  }
+  return out;
+}
+
 // --- Pure helpers --------------------------------------------------------
 
 // Extract the minimal shape that detect.detectTools consumes.
@@ -243,6 +295,10 @@ if (typeof module !== 'undefined') {
     listSessionStorage,
     listServiceWorkers,
     getQuotaEstimate,
+    bytesForLocalStorage,
+    bytesForSessionStorage,
+    bytesForCache,
+    bytesForCaches,
     toObserved,
     normalizeScope,
     distinctHosts,
