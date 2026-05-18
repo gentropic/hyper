@@ -1,0 +1,1181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>hyper — GCU storage inspector</title>
+  <style>/* Minimal v0.1 styling. Switchboard tokens will replace these later. */
+
+:root {
+  --bg: #fafafa;
+  --fg: #111;
+  --muted: #666;
+  --border: #ddd;
+  --accent: #06c;
+  --danger: #c33;
+  --tag-bg: #eee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111;
+    --fg: #eee;
+    --muted: #999;
+    --border: #333;
+    --accent: #6af;
+    --danger: #f66;
+    --tag-bg: #222;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  max-width: 800px;
+  margin-inline: auto;
+}
+
+h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; color: var(--muted); }
+
+.hyper-header { margin-bottom: 1.5rem; }
+.hyper-summary { margin: 0; color: var(--muted); }
+.hyper-summary .muted { color: var(--muted); }
+
+.hyper-tool {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.5rem;
+  background: var(--bg);
+}
+
+.hyper-tool__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+.hyper-tool__name { font-weight: 600; font-size: 1.05rem; }
+.hyper-tool__version { color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9rem; }
+.hyper-tool__tag {
+  background: var(--tag-bg);
+  padding: 0 0.4rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.hyper-tool__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.5rem;
+  color: var(--muted);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.hyper-tool__actions,
+.hyper-global-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.hyper-global-actions { margin-top: 1.5rem; }
+
+.hyper-btn {
+  font: inherit;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+.hyper-btn:hover { border-color: var(--accent); color: var(--accent); }
+.hyper-btn--danger { border-color: var(--danger); color: var(--danger); }
+.hyper-btn--danger:hover { background: var(--danger); color: var(--bg); }
+
+.hyper-unattributed,
+.hyper-malformed { margin-top: 1.5rem; color: var(--muted); }
+.hyper-malformed ul { margin: 0; padding-left: 1.25rem; }
+.hyper-malformed li { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; }
+
+.hyper-error {
+  color: var(--danger);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+</style>
+</head>
+<body>
+  <main id="app"></main>
+  <script>// Tool discovery: read gcu:tool:* announcements, fall back to heuristics,
+// then attribute observed storage (caches/IDBs/LS/SW scopes) to each tool.
+//
+// All functions here are pure — they take strings and lists, return objects.
+// The browser-side glue (reading localStorage, calling caches.keys() etc.)
+// lives in inspect.js. Keeping detect pure makes it node-testable.
+
+const KNOWN_TOOL_NAMES = ['ep', 'calque', 'dee', 'plan', 'rv', 'gcu-press'];
+
+const TOOL_KEY_RE = /^gcu:tool:(.*)$/;
+
+function parseAnnouncements(localStorageEntries) {
+  const tools = [];
+  const malformed = [];
+  for (const [key, value] of localStorageEntries) {
+    const match = TOOL_KEY_RE.exec(key);
+    if (!match) continue;
+    const suffix = match[1];
+    if (!suffix) {
+      malformed.push({ key, reason: 'empty name suffix' });
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      malformed.push({ key, reason: 'invalid JSON' });
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      malformed.push({ key, reason: 'announcement is not an object' });
+      continue;
+    }
+    if (parsed.name !== suffix) {
+      malformed.push({
+        key,
+        reason: `name field "${parsed.name}" does not match key suffix "${suffix}"`,
+      });
+      continue;
+    }
+    tools.push({
+      name: suffix,
+      source: 'announcement',
+      announcement: parsed,
+      storageKeys: parsed.storageKeys || {},
+    });
+  }
+  return { tools, malformed };
+}
+
+function inferTools(observed, alreadyKnownNames) {
+  const known = new Set(alreadyKnownNames);
+  const inferred = new Map();
+
+  const ensure = (name) => {
+    if (known.has(name) || !KNOWN_TOOL_NAMES.includes(name)) return null;
+    if (!inferred.has(name)) {
+      inferred.set(name, {
+        name,
+        source: 'heuristic',
+        announcement: null,
+        storageKeys: {
+          idb: [],
+          cacheNames: [],
+          swScopes: [],
+          localStoragePrefix: `${name}:`,
+        },
+      });
+    }
+    return inferred.get(name);
+  };
+
+  const pushUnique = (arr, item) => { if (!arr.includes(item)) arr.push(item); };
+
+  for (const idb of observed.idbNames || []) {
+    if (KNOWN_TOOL_NAMES.includes(idb)) {
+      const tool = ensure(idb);
+      if (tool) pushUnique(tool.storageKeys.idb, idb);
+    }
+  }
+  for (const cache of observed.cacheNames || []) {
+    for (const name of KNOWN_TOOL_NAMES) {
+      if (cache === name || cache.startsWith(`${name}-`)) {
+        const tool = ensure(name);
+        if (tool) pushUnique(tool.storageKeys.cacheNames, cache);
+        break;
+      }
+    }
+  }
+  for (const scope of observed.swScopes || []) {
+    for (const name of KNOWN_TOOL_NAMES) {
+      if (scope === `/${name}/` || scope.startsWith(`/${name}/`)) {
+        const tool = ensure(name);
+        if (tool) pushUnique(tool.storageKeys.swScopes, scope);
+        break;
+      }
+    }
+  }
+  for (const lsKey of observed.localStorageKeys || []) {
+    for (const name of KNOWN_TOOL_NAMES) {
+      if (lsKey.startsWith(`${name}:`)) {
+        ensure(name);
+        break;
+      }
+    }
+  }
+
+  return [...inferred.values()];
+}
+
+function attribute(tools, observed) {
+  const cacheNames = new Set(observed.cacheNames || []);
+  const idbNames = new Set(observed.idbNames || []);
+  const localStorageKeys = new Set(observed.localStorageKeys || []);
+  const swScopes = new Set(observed.swScopes || []);
+
+  const attributed = {};
+  for (const tool of tools) {
+    const claim = { cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] };
+    const sk = tool.storageKeys || {};
+    for (const name of sk.cacheNames || []) {
+      if (cacheNames.delete(name)) claim.cacheNames.push(name);
+    }
+    for (const name of sk.idb || []) {
+      if (idbNames.delete(name)) claim.idbNames.push(name);
+    }
+    for (const scope of sk.swScopes || []) {
+      if (swScopes.delete(scope)) claim.swScopes.push(scope);
+    }
+    if (sk.localStoragePrefix) {
+      for (const key of [...localStorageKeys]) {
+        if (key.startsWith(sk.localStoragePrefix)) {
+          claim.localStorageKeys.push(key);
+          localStorageKeys.delete(key);
+        }
+      }
+    }
+    attributed[tool.name] = claim;
+  }
+  return {
+    attributed,
+    unattributed: {
+      cacheNames: [...cacheNames],
+      idbNames: [...idbNames],
+      localStorageKeys: [...localStorageKeys],
+      swScopes: [...swScopes],
+    },
+  };
+}
+
+function detectTools(localStorageEntries, observed) {
+  const { tools: announced, malformed } = parseAnnouncements(localStorageEntries);
+  // Strip gcu:tool:* keys from observed LS — they are hyper's own metadata,
+  // not tool data to be attributed.
+  const lsForAttribution = (observed.localStorageKeys || []).filter(
+    (k) => !TOOL_KEY_RE.test(k),
+  );
+  const observedForInference = { ...observed, localStorageKeys: lsForAttribution };
+  const inferred = inferTools(observedForInference, announced.map((t) => t.name));
+  const allTools = [...announced, ...inferred];
+  const { attributed, unattributed } = attribute(allTools, observedForInference);
+  return {
+    tools: allTools.map((t) => ({ ...t, storage: attributed[t.name] })),
+    unattributed,
+    malformed,
+  };
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    KNOWN_TOOL_NAMES,
+    TOOL_KEY_RE,
+    parseAnnouncements,
+    inferTools,
+    attribute,
+    detectTools,
+  };
+}
+
+// Enumerate caches, IDB databases, localStorage, sessionStorage, and SW
+// registrations on the current origin. Two layers:
+//
+// 1. Browser-side enumerators (listCaches, listIdbs, ...) call the platform
+//    APIs. Each guards on `typeof <global> === 'undefined'` so the module is
+//    safe to require in node — missing APIs degrade to empty results.
+// 2. Pure helpers (toObserved, summarizeCache, summarizeOrigin, ...) take the
+//    enumerator output and reshape/summarize it. These are node-testable.
+//
+// Note on IDB: indexedDB.databases() is not available on every browser. When
+// missing we return []. Callers that want pre-2023 Safari / older WebView
+// coverage can fall back to opening names from gcu:tool announcements.
+
+async function inspectOrigin() {
+  const [cacheList, idbList, ls, ss, swList, estimate] = await Promise.all([
+    listCaches(),
+    listIdbs(),
+    Promise.resolve(listLocalStorage()),
+    Promise.resolve(listSessionStorage()),
+    listServiceWorkers(),
+    getQuotaEstimate(),
+  ]);
+  return {
+    caches: cacheList,
+    idbs: idbList,
+    localStorage: ls,
+    sessionStorage: ss,
+    swRegistrations: swList,
+    estimate,
+  };
+}
+
+async function listCaches() {
+  if (typeof caches === 'undefined') return [];
+  const names = await caches.keys();
+  const results = [];
+  for (const name of names) {
+    const cache = await caches.open(name);
+    const keys = await cache.keys();
+    results.push({
+      name,
+      entryCount: keys.length,
+      entryUrls: keys.map((r) => r.url),
+    });
+  }
+  return results;
+}
+
+async function listIdbs() {
+  if (typeof indexedDB === 'undefined') return [];
+  if (typeof indexedDB.databases !== 'function') return [];
+  const dbs = await indexedDB.databases();
+  const results = [];
+  for (const meta of dbs) {
+    if (!meta.name) continue;
+    try {
+      const db = await openIdb(meta.name);
+      const stores = [];
+      for (const storeName of db.objectStoreNames) {
+        stores.push({ name: storeName, recordCount: await countRecords(db, storeName) });
+      }
+      db.close();
+      results.push({ name: meta.name, version: meta.version, stores });
+    } catch (e) {
+      results.push({ name: meta.name, version: meta.version, stores: [], error: String(e) });
+    }
+  }
+  return results;
+}
+
+function openIdb(name) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(name);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error('blocked'));
+  });
+}
+
+function countRecords(db, storeName) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).count();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function listLocalStorage() {
+  return readStorage(typeof localStorage === 'undefined' ? null : localStorage);
+}
+
+function listSessionStorage() {
+  return readStorage(typeof sessionStorage === 'undefined' ? null : sessionStorage);
+}
+
+function readStorage(store) {
+  if (!store) return [];
+  const entries = [];
+  for (let i = 0; i < store.length; i++) {
+    const key = store.key(i);
+    if (key === null) continue;
+    entries.push([key, store.getItem(key)]);
+  }
+  return entries;
+}
+
+async function listServiceWorkers() {
+  if (typeof navigator === 'undefined' || !navigator.serviceWorker) return [];
+  const regs = await navigator.serviceWorker.getRegistrations();
+  return regs.map((r) => {
+    const worker = r.active || r.waiting || r.installing;
+    return {
+      scope: r.scope,
+      scriptURL: worker ? worker.scriptURL : null,
+      state: worker ? worker.state : 'none',
+    };
+  });
+}
+
+async function getQuotaEstimate() {
+  if (typeof navigator === 'undefined' || !navigator.storage || !navigator.storage.estimate) return null;
+  return await navigator.storage.estimate();
+}
+
+// --- Pure helpers --------------------------------------------------------
+
+// Extract the minimal shape that detect.detectTools consumes.
+function toObserved(inspectResult) {
+  return {
+    cacheNames: inspectResult.caches.map((c) => c.name),
+    idbNames: inspectResult.idbs.map((i) => i.name),
+    localStorageKeys: inspectResult.localStorage.map(([k]) => k),
+    swScopes: inspectResult.swRegistrations.map((r) => normalizeScope(r.scope)),
+  };
+}
+
+// SW scopes come back from getRegistrations() as full URLs ("https://host/ep/").
+// detect's heuristics work in path space ("/ep/"), so we strip to pathname.
+function normalizeScope(scope) {
+  try {
+    return new URL(scope).pathname;
+  } catch {
+    return scope;
+  }
+}
+
+function distinctHosts(urls) {
+  const hosts = new Set();
+  for (const u of urls) {
+    try { hosts.add(new URL(u).host); } catch { /* skip non-URLs */ }
+  }
+  return [...hosts];
+}
+
+function summarizeCache(cache) {
+  return {
+    name: cache.name,
+    entryCount: cache.entryCount,
+    distinctHosts: distinctHosts(cache.entryUrls || []),
+  };
+}
+
+function summarizeOrigin(inspectResult) {
+  const cacheEntryTotal = inspectResult.caches.reduce((s, c) => s + c.entryCount, 0);
+  const idbRecordTotal = inspectResult.idbs.reduce(
+    (s, i) => s + i.stores.reduce((a, st) => a + st.recordCount, 0),
+    0,
+  );
+  return {
+    cacheCount: inspectResult.caches.length,
+    cacheEntryTotal,
+    idbCount: inspectResult.idbs.length,
+    idbRecordTotal,
+    localStorageCount: inspectResult.localStorage.length,
+    sessionStorageCount: inspectResult.sessionStorage.length,
+    swCount: inspectResult.swRegistrations.length,
+    quotaUsed: inspectResult.estimate ? inspectResult.estimate.usage : null,
+    quotaTotal: inspectResult.estimate ? inspectResult.estimate.quota : null,
+  };
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    inspectOrigin,
+    listCaches,
+    listIdbs,
+    listLocalStorage,
+    listSessionStorage,
+    listServiceWorkers,
+    getQuotaEstimate,
+    toObserved,
+    normalizeScope,
+    distinctHosts,
+    summarizeCache,
+    summarizeOrigin,
+  };
+}
+
+// Bundle IDB + localStorage (+ sessionStorage) into the JSON shape from
+// SPEC §Export, and trigger a browser download.
+//
+// Pure layer (testable): buildBundle, buildToolBundle, filenameTimestamp.
+// Browser layer: readIdbContents (cursor walk per store), downloadBundle
+//                (Blob + synthetic <a download> click).
+//
+// Cache Storage is intentionally NOT included — caches are regenerable from
+// the network. SPEC mentions an opt-in "include caches" toggle; deferred.
+
+function buildBundle({ detectResult, idbContents, lsEntries, ssEntries, origin, exportedAt }) {
+  const lsMap = toMap(lsEntries);
+  const ssMap = toMap(ssEntries);
+  const idbMap = toMap(idbContents);
+
+  const tools = {};
+  for (const tool of detectResult.tools) {
+    tools[tool.name] = buildToolBundle(tool, idbMap, lsMap);
+  }
+
+  const unattributed = {
+    idb: pickKeys(idbMap, detectResult.unattributed.idbNames),
+    localStorage: pickKeys(lsMap, detectResult.unattributed.localStorageKeys),
+    sessionStorage: Object.fromEntries(ssMap),
+  };
+
+  return {
+    exportedAt: exportedAt || new Date().toISOString(),
+    exportedFrom: origin || '',
+    tools,
+    unattributed,
+  };
+}
+
+function buildToolBundle(tool, idbMap, lsMap) {
+  const out = {
+    version: (tool.announcement && tool.announcement.version) || null,
+    source: tool.source,
+    idb: pickKeys(idbMap, tool.storage.idbNames || []),
+    localStorage: pickKeys(lsMap, tool.storage.localStorageKeys || []),
+  };
+  return out;
+}
+
+function pickKeys(map, keys) {
+  const out = {};
+  for (const k of keys) {
+    if (map.has(k)) out[k] = map.get(k);
+  }
+  return out;
+}
+
+function toMap(input) {
+  if (!input) return new Map();
+  if (input instanceof Map) return input;
+  if (Array.isArray(input)) return new Map(input);
+  return new Map(Object.entries(input));
+}
+
+function filenameTimestamp(date) {
+  return (date || new Date()).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+}
+
+// --- Browser layer -------------------------------------------------------
+
+function readIdbContents(name) {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { resolve({}); return; }
+    const req = indexedDB.open(name);
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error('blocked'));
+    req.onsuccess = async () => {
+      const db = req.result;
+      const out = {};
+      try {
+        for (const storeName of db.objectStoreNames) {
+          out[storeName] = await readStore(db, storeName);
+        }
+        db.close();
+        resolve(out);
+      } catch (e) {
+        db.close();
+        reject(e);
+      }
+    };
+  });
+}
+
+function readStore(db, storeName) {
+  return new Promise((resolve, reject) => {
+    const records = [];
+    const req = db.transaction(storeName, 'readonly').objectStore(storeName).openCursor();
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor) {
+        records.push(cursor.value);
+        cursor.continue();
+      } else {
+        resolve(records);
+      }
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function downloadBundle(bundle, filename) {
+  if (typeof Blob === 'undefined' || typeof URL === 'undefined' || typeof document === 'undefined') {
+    return false;
+  }
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}
+
+// --- Orchestrators -------------------------------------------------------
+
+async function exportAll(state) {
+  const idbNames = uniq([
+    ...state.detectResult.tools.flatMap((t) => t.storage.idbNames || []),
+    ...state.detectResult.unattributed.idbNames,
+  ]);
+  const idbContents = await readManyIdbs(idbNames);
+  const bundle = buildBundle({
+    detectResult: state.detectResult,
+    idbContents,
+    lsEntries: state.inspectResult.localStorage,
+    ssEntries: state.inspectResult.sessionStorage,
+    origin: state.origin,
+  });
+  downloadBundle(bundle, `hyper-export-${filenameTimestamp()}.json`);
+  return bundle;
+}
+
+async function exportTool(state, toolName) {
+  const tool = state.detectResult.tools.find((t) => t.name === toolName);
+  if (!tool) throw new Error(`tool not found: ${toolName}`);
+  const idbContents = await readManyIdbs(tool.storage.idbNames || []);
+  const synthetic = {
+    tools: [tool],
+    unattributed: { idbNames: [], localStorageKeys: [], cacheNames: [], swScopes: [] },
+    malformed: [],
+  };
+  const bundle = buildBundle({
+    detectResult: synthetic,
+    idbContents,
+    lsEntries: state.inspectResult.localStorage,
+    ssEntries: state.inspectResult.sessionStorage,
+    origin: state.origin,
+  });
+  downloadBundle(bundle, `hyper-export-${tool.name}-${filenameTimestamp()}.json`);
+  return bundle;
+}
+
+async function readManyIdbs(names) {
+  const map = new Map();
+  for (const name of names) {
+    try {
+      map.set(name, await readIdbContents(name));
+    } catch (e) {
+      map.set(name, { __error: String(e && e.message ? e.message : e) });
+    }
+  }
+  return map;
+}
+
+function uniq(arr) { return [...new Set(arr)]; }
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    buildBundle,
+    buildToolBundle,
+    pickKeys,
+    toMap,
+    filenameTimestamp,
+    readIdbContents,
+    downloadBundle,
+    exportAll,
+    exportTool,
+  };
+}
+
+// Destructive operations: clear caches / unregister SWs / delete IDBs /
+// clear LS, plus the orchestrations (force-refresh, reset-tool, nuke).
+//
+// Same two-layer pattern as inspect.js:
+//   - plan* helpers are pure (testable) and produce the data shown in
+//     confirmation dialogs ("will delete: 2 caches, 1 SW, ...").
+//   - exec* functions touch platform APIs; each guards on `typeof`.
+//
+// Confirmation gating lives in main.js — actions here just do the work.
+
+// --- Pure planning helpers ------------------------------------------------
+
+function planResetTool(tool) {
+  const sk = (tool && tool.storage) || {};
+  return {
+    cacheNames: sk.cacheNames || [],
+    swScopes: sk.swScopes || [],
+    idbNames: sk.idbNames || [],
+    localStorageKeys: sk.localStorageKeys || [],
+    sessionStorageKeys: [],
+  };
+}
+
+function planForceRefresh(tool) {
+  const sk = (tool && tool.storage) || {};
+  return {
+    cacheNames: sk.cacheNames || [],
+    swScopes: sk.swScopes || [],
+    url: pickToolURL(tool),
+  };
+}
+
+function planNuke(inspectResult) {
+  return {
+    cacheNames: inspectResult.caches.map((c) => c.name),
+    swScopes: inspectResult.swRegistrations.map((r) => r.scope),
+    idbNames: inspectResult.idbs.map((i) => i.name),
+    localStorageKeys: inspectResult.localStorage.map(([k]) => k),
+    sessionStorageKeys: inspectResult.sessionStorage.map(([k]) => k),
+  };
+}
+
+function pickToolURL(tool) {
+  if (!tool) return null;
+  const links = tool.announcement && tool.announcement.links;
+  if (links && links.homepage) return links.homepage;
+  const scopes = tool.storage && tool.storage.swScopes;
+  if (scopes && scopes[0]) return scopes[0];
+  return null;
+}
+
+function describePlan(plan) {
+  const parts = [];
+  const pushIf = (count, singular, plural) => {
+    if (count > 0) parts.push(`${count} ${count === 1 ? singular : plural}`);
+  };
+  pushIf((plan.cacheNames || []).length, 'cache', 'caches');
+  pushIf((plan.swScopes || []).length, 'service worker', 'service workers');
+  pushIf((plan.idbNames || []).length, 'IDB database', 'IDB databases');
+  pushIf((plan.localStorageKeys || []).length, 'localStorage key', 'localStorage keys');
+  pushIf((plan.sessionStorageKeys || []).length, 'sessionStorage key', 'sessionStorage keys');
+  return parts.length ? parts.join(', ') : 'nothing';
+}
+
+// --- Browser-side primitives ----------------------------------------------
+
+async function clearCaches(names) {
+  if (typeof caches === 'undefined') return { cleared: [] };
+  const cleared = [];
+  for (const name of names) {
+    if (await caches.delete(name)) cleared.push(name);
+  }
+  return { cleared };
+}
+
+async function unregisterScopes(scopes) {
+  if (typeof navigator === 'undefined' || !navigator.serviceWorker) {
+    return { unregistered: [] };
+  }
+  const targets = new Set(scopes);
+  const regs = await navigator.serviceWorker.getRegistrations();
+  const unregistered = [];
+  for (const reg of regs) {
+    if (targets.has(reg.scope) || targets.has(scopePath(reg.scope))) {
+      if (await reg.unregister()) unregistered.push(reg.scope);
+    }
+  }
+  return { unregistered };
+}
+
+function scopePath(scope) {
+  try { return new URL(scope).pathname; } catch { return scope; }
+}
+
+function deleteIdbs(names) {
+  if (typeof indexedDB === 'undefined') return Promise.resolve({ deleted: [], blocked: [], errors: [] });
+  return Promise.all(names.map(deleteIdb)).then((results) => ({
+    deleted: results.filter((r) => r.status === 'deleted').map((r) => r.name),
+    blocked: results.filter((r) => r.status === 'blocked').map((r) => r.name),
+    errors: results.filter((r) => r.status === 'error').map((r) => r.name),
+  }));
+}
+
+function deleteIdb(name) {
+  return new Promise((resolve) => {
+    const req = indexedDB.deleteDatabase(name);
+    req.onsuccess = () => resolve({ name, status: 'deleted' });
+    req.onerror = () => resolve({ name, status: 'error' });
+    // Blocked means another tab holds the DB open; we resolve so the UI can
+    // tell the user. The delete request itself stays pending and may complete
+    // later when the blocker closes. Re-running will be a no-op by then.
+    req.onblocked = () => resolve({ name, status: 'blocked' });
+  });
+}
+
+function clearLocalStorageKeys(keys) {
+  if (typeof localStorage === 'undefined') return { cleared: [] };
+  return clearStorageKeys(localStorage, keys);
+}
+
+function clearSessionStorageKeys(keys) {
+  if (typeof sessionStorage === 'undefined') return { cleared: [] };
+  return clearStorageKeys(sessionStorage, keys);
+}
+
+function clearStorageKeys(store, keys) {
+  const cleared = [];
+  for (const k of keys) {
+    if (store.getItem(k) !== null) {
+      store.removeItem(k);
+      cleared.push(k);
+    }
+  }
+  return { cleared };
+}
+
+// --- Orchestrations -------------------------------------------------------
+
+async function resetTool(tool) {
+  const plan = planResetTool(tool);
+  const [c, s, i, l] = await Promise.all([
+    clearCaches(plan.cacheNames),
+    unregisterScopes(plan.swScopes),
+    deleteIdbs(plan.idbNames),
+    Promise.resolve(clearLocalStorageKeys(plan.localStorageKeys)),
+  ]);
+  return { caches: c, sws: s, idbs: i, localStorage: l };
+}
+
+async function forceRefreshTool(tool, openURL) {
+  const plan = planForceRefresh(tool);
+  const [s, c] = await Promise.all([
+    unregisterScopes(plan.swScopes),
+    clearCaches(plan.cacheNames),
+  ]);
+  if (plan.url && typeof openURL === 'function') openURL(plan.url);
+  return { caches: c, sws: s, url: plan.url };
+}
+
+async function refreshAllTools(detectResult) {
+  const results = [];
+  for (const tool of detectResult.tools) {
+    const plan = planForceRefresh(tool);
+    const [s, c] = await Promise.all([
+      unregisterScopes(plan.swScopes),
+      clearCaches(plan.cacheNames),
+    ]);
+    results.push({ tool: tool.name, caches: c, sws: s });
+  }
+  return { results };
+}
+
+async function nukeOrigin(inspectResult) {
+  const plan = planNuke(inspectResult);
+  const [c, s, i, l, ss] = await Promise.all([
+    clearCaches(plan.cacheNames),
+    unregisterScopes(plan.swScopes),
+    deleteIdbs(plan.idbNames),
+    Promise.resolve(clearLocalStorageKeys(plan.localStorageKeys)),
+    Promise.resolve(clearSessionStorageKeys(plan.sessionStorageKeys)),
+  ]);
+  return { caches: c, sws: s, idbs: i, localStorage: l, sessionStorage: ss };
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = {
+    planResetTool,
+    planForceRefresh,
+    planNuke,
+    pickToolURL,
+    describePlan,
+    scopePath,
+    clearCaches,
+    unregisterScopes,
+    deleteIdbs,
+    clearLocalStorageKeys,
+    clearSessionStorageKeys,
+    resetTool,
+    forceRefreshTool,
+    refreshAllTools,
+    nukeOrigin,
+  };
+}
+
+// DOM rendering: take a detect/inspect result, produce the UI from SPEC §UI shape.
+//
+// Two layers, same pattern as inspect.js:
+// 1. Pure helpers (formatBytes, decorateTool) — node-testable.
+// 2. renderApp(state, root) — DOM construction; eyeball in browser.
+//
+// Action buttons carry data-action / data-tool attributes; main.js binds a
+// single delegated click handler. Until actions.js exists, clicks are no-ops.
+
+function formatBytes(bytes) {
+  if (bytes == null) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function decorateTool(tool, inspectResult) {
+  const cacheMap = new Map(inspectResult.caches.map((c) => [c.name, c]));
+  const idbMap = new Map(inspectResult.idbs.map((i) => [i.name, i]));
+
+  const cacheEntries = (tool.storage.cacheNames || [])
+    .map((n) => cacheMap.get(n))
+    .filter(Boolean)
+    .reduce((s, c) => s + c.entryCount, 0);
+
+  const idbRecords = (tool.storage.idbNames || [])
+    .map((n) => idbMap.get(n))
+    .filter(Boolean)
+    .reduce((s, i) => s + i.stores.reduce((a, st) => a + st.recordCount, 0), 0);
+
+  return {
+    name: tool.name,
+    displayName: (tool.announcement && tool.announcement.displayName) || tool.name,
+    version: tool.announcement ? (tool.announcement.version || null) : null,
+    source: tool.source,
+    cacheCount: (tool.storage.cacheNames || []).length,
+    cacheEntries,
+    idbCount: (tool.storage.idbNames || []).length,
+    idbRecords,
+    localStorageCount: (tool.storage.localStorageKeys || []).length,
+    swCount: (tool.storage.swScopes || []).length,
+  };
+}
+
+// --- DOM construction (browser only) -------------------------------------
+
+function renderApp(state, root) {
+  root.replaceChildren();
+  root.appendChild(renderHeader(state));
+  root.appendChild(renderToolList(state));
+  if (hasUnattributed(state.detectResult.unattributed)) {
+    root.appendChild(renderUnattributed(state.detectResult.unattributed));
+  }
+  if (state.detectResult.malformed.length) {
+    root.appendChild(renderMalformed(state.detectResult.malformed));
+  }
+  root.appendChild(renderGlobalActions());
+}
+
+function renderHeader(state) {
+  const { origin, detectResult, inspectResult } = state;
+  const summary = summaryStats(inspectResult, detectResult);
+  const header = el('header', { class: 'hyper-header' });
+  header.appendChild(el('h1', { text: `${origin} — GCU storage` }));
+  const sub = el('p', { class: 'hyper-summary' });
+  sub.appendChild(el('span', { text: `${summary.toolCount} tool${summary.toolCount === 1 ? '' : 's'} detected` }));
+  sub.appendChild(el('span', { class: 'sep', text: ' · ' }));
+  sub.appendChild(el('span', { text: `${formatBytes(summary.quotaUsed)} used` }));
+  if (summary.quotaTotal != null) {
+    sub.appendChild(el('span', { class: 'muted', text: ` (of ${formatBytes(summary.quotaTotal)} quota)` }));
+  }
+  header.appendChild(sub);
+  return header;
+}
+
+function summaryStats(inspectResult, detectResult) {
+  return {
+    toolCount: detectResult.tools.length,
+    quotaUsed: inspectResult.estimate ? inspectResult.estimate.usage : null,
+    quotaTotal: inspectResult.estimate ? inspectResult.estimate.quota : null,
+  };
+}
+
+function renderToolList(state) {
+  const list = el('section', { class: 'hyper-tools' });
+  if (state.detectResult.tools.length === 0) {
+    list.appendChild(el('p', { class: 'muted', text: 'No GCU tools detected on this origin.' }));
+    return list;
+  }
+  for (const tool of state.detectResult.tools) {
+    list.appendChild(renderToolRow(decorateTool(tool, state.inspectResult)));
+  }
+  return list;
+}
+
+function renderToolRow(t) {
+  const row = el('article', { class: `hyper-tool hyper-tool--${t.source}`, data: { tool: t.name } });
+  const head = el('div', { class: 'hyper-tool__head' });
+  head.appendChild(el('span', { class: 'hyper-tool__name', text: t.displayName }));
+  if (t.version) head.appendChild(el('span', { class: 'hyper-tool__version', text: `v${t.version}` }));
+  if (t.source === 'heuristic') head.appendChild(el('span', { class: 'hyper-tool__tag', text: 'inferred' }));
+  row.appendChild(head);
+
+  const stats = el('div', { class: 'hyper-tool__stats' });
+  stats.appendChild(el('span', { text: `${t.cacheCount} cache${t.cacheCount === 1 ? '' : 's'} (${t.cacheEntries} entries)` }));
+  stats.appendChild(el('span', { text: `${t.idbCount} IDB (${t.idbRecords} records)` }));
+  stats.appendChild(el('span', { text: `${t.localStorageCount} LS keys` }));
+  stats.appendChild(el('span', { text: `${t.swCount} SW` }));
+  row.appendChild(stats);
+
+  const actions = el('div', { class: 'hyper-tool__actions' });
+  actions.appendChild(actionButton('Export', 'export-tool', t.name));
+  actions.appendChild(actionButton('Force refresh', 'refresh-tool', t.name));
+  actions.appendChild(actionButton('Reset', 'reset-tool', t.name, 'danger'));
+  row.appendChild(actions);
+
+  return row;
+}
+
+function renderUnattributed(unattributed) {
+  const section = el('section', { class: 'hyper-unattributed' });
+  section.appendChild(el('h2', { text: 'Unattributed storage' }));
+  const lines = [
+    `${unattributed.cacheNames.length} cache${unattributed.cacheNames.length === 1 ? '' : 's'}`,
+    `${unattributed.idbNames.length} IDB`,
+    `${unattributed.localStorageKeys.length} LS keys`,
+    `${unattributed.swScopes.length} SW`,
+  ];
+  section.appendChild(el('p', { text: lines.join(' · ') }));
+  return section;
+}
+
+function renderMalformed(malformed) {
+  const section = el('section', { class: 'hyper-malformed' });
+  section.appendChild(el('h2', { text: 'Malformed announcements' }));
+  const ul = el('ul');
+  for (const m of malformed) {
+    ul.appendChild(el('li', { text: `${m.key}: ${m.reason}` }));
+  }
+  section.appendChild(ul);
+  return section;
+}
+
+function renderGlobalActions() {
+  const section = el('section', { class: 'hyper-global-actions' });
+  section.appendChild(actionButton('Export all', 'export-all'));
+  section.appendChild(actionButton('Refresh all', 'refresh-all'));
+  section.appendChild(actionButton('Reset everything', 'nuke', null, 'danger'));
+  return section;
+}
+
+function actionButton(label, action, toolName, variant) {
+  const data = { action };
+  if (toolName) data.tool = toolName;
+  return el('button', {
+    text: label,
+    class: `hyper-btn${variant ? ` hyper-btn--${variant}` : ''}`,
+    data,
+    attrs: { type: 'button' },
+  });
+}
+
+function hasUnattributed(u) {
+  return u.cacheNames.length + u.idbNames.length + u.localStorageKeys.length + u.swScopes.length > 0;
+}
+
+// Tiny createElement helper — keeps the call sites readable and avoids
+// innerHTML entirely (so tool names from localStorage can't inject markup).
+function el(tag, opts = {}) {
+  const node = document.createElement(tag);
+  if (opts.class) node.className = opts.class;
+  if (opts.text != null) node.textContent = opts.text;
+  if (opts.attrs) for (const [k, v] of Object.entries(opts.attrs)) node.setAttribute(k, v);
+  if (opts.data) for (const [k, v] of Object.entries(opts.data)) node.dataset[k] = v;
+  return node;
+}
+
+if (typeof module !== 'undefined') {
+  module.exports = { formatBytes, decorateTool, summaryStats, hasUnattributed };
+}
+
+// Entry point. Concatenated last by build.js, so functions from detect /
+// inspect / render / actions are all defined as globals by the time we run.
+
+let currentState = null;
+let busy = false;
+
+async function boot() {
+  const root = document.getElementById('app');
+  if (!currentState) {
+    // Attach the delegated click handler exactly once.
+    root.addEventListener('click', onActionClick);
+  }
+  try {
+    currentState = await loadState();
+    renderApp(currentState, root);
+  } catch (err) {
+    showError(root, err);
+  }
+}
+
+async function loadState() {
+  const inspectResult = await inspectOrigin();
+  const detectResult = detectTools(inspectResult.localStorage, toObserved(inspectResult));
+  return {
+    origin: typeof location !== 'undefined' ? location.origin : '',
+    inspectResult,
+    detectResult,
+  };
+}
+
+async function onActionClick(e) {
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+  if (busy) return;
+  const action = target.dataset.action;
+  const toolName = target.dataset.tool || null;
+  const tool = toolName
+    ? currentState.detectResult.tools.find((t) => t.name === toolName)
+    : null;
+  busy = true;
+  try {
+    const didMutate = await dispatch(action, tool);
+    if (didMutate) await boot();
+  } catch (err) {
+    alert(`hyper: action "${action}" failed:\n${err && err.message ? err.message : err}`);
+  } finally {
+    busy = false;
+  }
+}
+
+async function dispatch(action, tool) {
+  switch (action) {
+    case 'reset-tool': {
+      if (!tool) return false;
+      const plan = planResetTool(tool);
+      if (!confirm(`Reset ${tool.name}? Will delete: ${describePlan(plan)}.`)) return false;
+      await resetTool(tool);
+      return true;
+    }
+    case 'refresh-tool': {
+      if (!tool) return false;
+      await forceRefreshTool(tool, (url) => window.open(url, '_blank'));
+      return true;
+    }
+    case 'refresh-all': {
+      const n = currentState.detectResult.tools.length;
+      if (n === 0) return false;
+      if (!confirm(`Refresh all tools? Will clear caches and unregister SWs for ${n} tool${n === 1 ? '' : 's'}.`)) return false;
+      await refreshAllTools(currentState.detectResult);
+      return true;
+    }
+    case 'nuke': {
+      const plan = planNuke(currentState.inspectResult);
+      const summary = describePlan(plan);
+      const input = prompt(`NUKE EVERYTHING on this origin.\n\nWill delete: ${summary}.\n\nType "delete" to confirm:`);
+      if (input !== 'delete') return false;
+      await nukeOrigin(currentState.inspectResult);
+      return true;
+    }
+    case 'export-tool': {
+      if (!tool) return false;
+      await exportTool(currentState, tool.name);
+      return false;
+    }
+    case 'export-all': {
+      await exportAll(currentState);
+      return false;
+    }
+    default:
+      // eslint-disable-next-line no-console
+      console.warn('[hyper] unknown action:', action);
+      return false;
+  }
+}
+
+function showError(root, err) {
+  root.replaceChildren();
+  const pre = document.createElement('pre');
+  pre.className = 'hyper-error';
+  pre.textContent = `hyper failed to load:\n${err && err.stack ? err.stack : err}`;
+  root.appendChild(pre);
+}
+
+boot();
+</script>
+</body>
+</html>
