@@ -3,8 +3,10 @@ const assert = require('node:assert/strict');
 const {
   formatBytes,
   decorateTool,
+  buildToolDetails,
   summaryStats,
   hasUnattributed,
+  isPhraseAccepted,
 } = require('../src/js/render');
 
 test('formatBytes: null → em dash', () => {
@@ -117,4 +119,77 @@ test('hasUnattributed: true when any category non-empty', () => {
 
 test('hasUnattributed: false when all empty', () => {
   assert.equal(hasUnattributed({ cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] }), false);
+});
+
+test('buildToolDetails: cross-references inspect data for the tool', () => {
+  const tool = {
+    name: 'ep',
+    storage: {
+      cacheNames: ['ep-shell-v1'],
+      idbNames: ['ep'],
+      localStorageKeys: ['ep:current', 'ep:saved'],
+      swScopes: ['/ep/'],
+    },
+  };
+  const inspectResult = {
+    caches: [{ name: 'ep-shell-v1', entryUrls: ['https://x/a', 'https://x/b'] }],
+    idbs: [{ name: 'ep', version: 2, stores: [{ name: 'programs', recordCount: 7 }] }],
+    localStorage: [['ep:current', 'ore'], ['ep:saved', 'data'], ['ep:other', 'ignored']],
+    swRegistrations: [{ scope: 'https://gentropic.org/ep/', scriptURL: 'https://gentropic.org/ep/sw.js', state: 'activated' }],
+  };
+  const d = buildToolDetails(tool, inspectResult);
+  assert.deepEqual(d.caches, [{ name: 'ep-shell-v1', urls: ['https://x/a', 'https://x/b'] }]);
+  assert.deepEqual(d.idbs, [{ name: 'ep', version: 2, stores: [{ name: 'programs', recordCount: 7 }] }]);
+  assert.deepEqual(d.localStorage, [['ep:current', 'ore'], ['ep:saved', 'data']]);
+  assert.equal(d.sws.length, 1);
+  assert.equal(d.sws[0].state, 'activated');
+});
+
+test('buildToolDetails: SW scope matches via path (not full URL)', () => {
+  const tool = { name: 'ep', storage: { swScopes: ['/ep/'], cacheNames: [], idbNames: [], localStorageKeys: [] } };
+  const inspectResult = {
+    caches: [], idbs: [], localStorage: [],
+    swRegistrations: [{ scope: 'https://gentropic.org/ep/', scriptURL: 'x', state: 'activated' }],
+  };
+  const d = buildToolDetails(tool, inspectResult);
+  assert.equal(d.sws.length, 1);
+});
+
+test('buildToolDetails: missing storage entries quietly skipped', () => {
+  const tool = {
+    name: 'ghost',
+    storage: { cacheNames: ['gone'], idbNames: ['gone'], localStorageKeys: ['gone'], swScopes: ['/gone/'] },
+  };
+  const inspectResult = { caches: [], idbs: [], localStorage: [], swRegistrations: [] };
+  const d = buildToolDetails(tool, inspectResult);
+  assert.deepEqual(d.caches, []);
+  assert.deepEqual(d.idbs, []);
+  assert.deepEqual(d.localStorage, []);
+  assert.deepEqual(d.sws, []);
+});
+
+test('isPhraseAccepted: exact match passes', () => {
+  assert.equal(isPhraseAccepted('delete', 'delete'), true);
+});
+
+test('isPhraseAccepted: surrounding whitespace is tolerated', () => {
+  assert.equal(isPhraseAccepted('  delete  ', 'delete'), true);
+  assert.equal(isPhraseAccepted('\tdelete\n', 'delete'), true);
+});
+
+test('isPhraseAccepted: case-sensitive', () => {
+  assert.equal(isPhraseAccepted('Delete', 'delete'), false);
+  assert.equal(isPhraseAccepted('DELETE', 'delete'), false);
+});
+
+test('isPhraseAccepted: prefix/suffix mismatches rejected', () => {
+  assert.equal(isPhraseAccepted('delete me', 'delete'), false);
+  assert.equal(isPhraseAccepted('please delete', 'delete'), false);
+});
+
+test('isPhraseAccepted: empty and non-string inputs rejected', () => {
+  assert.equal(isPhraseAccepted('', 'delete'), false);
+  assert.equal(isPhraseAccepted(null, 'delete'), false);
+  assert.equal(isPhraseAccepted(undefined, 'delete'), false);
+  assert.equal(isPhraseAccepted(42, 'delete'), false);
 });

@@ -53,7 +53,13 @@ async function dispatch(action, tool) {
     case 'reset-tool': {
       if (!tool) return false;
       const plan = planResetTool(tool);
-      if (!confirm(`Reset ${tool.name}? Will delete: ${describePlan(plan)}.`)) return false;
+      const ok = await confirmDialog({
+        title: `Reset ${tool.name}?`,
+        body: `Will delete: ${describePlan(plan)}.`,
+        confirmLabel: 'Reset',
+        danger: true,
+      });
+      if (!ok) return false;
       await resetTool(tool);
       return true;
     }
@@ -65,15 +71,24 @@ async function dispatch(action, tool) {
     case 'refresh-all': {
       const n = currentState.detectResult.tools.length;
       if (n === 0) return false;
-      if (!confirm(`Refresh all tools? Will clear caches and unregister SWs for ${n} tool${n === 1 ? '' : 's'}.`)) return false;
+      const ok = await confirmDialog({
+        title: 'Refresh all tools?',
+        body: `Will clear caches and unregister service workers for ${n} tool${n === 1 ? '' : 's'}. User data (IDB, localStorage) is preserved.`,
+        confirmLabel: 'Refresh all',
+      });
+      if (!ok) return false;
       await refreshAllTools(currentState.detectResult);
       return true;
     }
     case 'nuke': {
       const plan = planNuke(currentState.inspectResult);
-      const summary = describePlan(plan);
-      const input = prompt(`NUKE EVERYTHING on this origin.\n\nWill delete: ${summary}.\n\nType "delete" to confirm:`);
-      if (input !== 'delete') return false;
+      const ok = await confirmWithPhrase({
+        title: 'Nuke everything on this origin',
+        body: `Will delete: ${describePlan(plan)}.\n\nThis cannot be undone. Export first if you want your data back.`,
+        phrase: 'delete',
+        confirmLabel: 'Nuke',
+      });
+      if (!ok) return false;
       await nukeOrigin(currentState.inspectResult);
       return true;
     }

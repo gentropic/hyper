@@ -4,116 +4,417 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>hyper — GCU storage inspector</title>
-  <style>/* Minimal v0.1 styling. Switchboard tokens will replace these later. */
+  <script>
+    // Switchboard theme bootstrap. Runs before <body> renders so the
+    // first paint is already on the correct surface — no FOUC. Mirrors
+    // OS preference; persistence (localStorage) deferred.
+    (function () {
+      var mq = window.matchMedia('(prefers-color-scheme: dark)');
+      // Switchboard convention: dark sets attribute, light leaves it absent.
+      var apply = function (dark) {
+        if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+        else document.documentElement.removeAttribute('data-theme');
+      };
+      apply(mq.matches);
+      mq.addEventListener('change', function (e) { apply(e.matches); });
+    })();
+  </script>
+  <style>/* hyper — uses Switchboard 1.0 tokens.
+ * Tokens here mirror Switchboard SPEC §2-4 (surfaces / accents / other).
+ * Component CSS reads --sw-* directly (no semantic indirection — hyper is
+ * small enough to skip the --au-* style re-skinnability layer that
+ * auditable uses).
+ *
+ * Light is :root (equipment gray); dark is [data-theme="dark"] on <html>.
+ * The theme attribute is set by main.js from prefers-color-scheme on boot.
+ * Fonts fall back to system stacks (the woff2 binaries are not embedded;
+ * Barlow / Space Mono load when the user has them installed locally).
+ */
 
 :root {
-  --bg: #fafafa;
-  --fg: #111;
-  --muted: #666;
-  --border: #ddd;
-  --accent: #06c;
-  --danger: #c33;
-  --tag-bg: #eee;
+  /* Surfaces — equipment gray */
+  --sw-bg-deep:     #C2C1BE;
+  --sw-bg:          #D2D1CE;
+  --sw-bg-raised:   #E4E3E1;
+  --sw-bg-bright:   #EDECEB;
+  --sw-text:        #232322;
+  --sw-text-mid:    #504F4C;
+  --sw-text-soft:   #7A7875;
+  --sw-border:      #B3B1AD;
+  --sw-border-soft: #C6C4C1;
+  --sw-rule:        #A5A3A0;
+
+  /* Accents — light */
+  --sw-orange:      #B54E1A;  --sw-orange-soft: #E8D8CF;
+  --sw-teal:        #1B6B72;  --sw-teal-soft:   #CEE2E4;
+  --sw-green:       #3D7340;  --sw-green-soft:  #D2E4D4;
+  --sw-amber:       #8E6518;  --sw-amber-soft:  #E4DCCC;
+  --sw-red:         #A8312A;  --sw-red-soft:    #E8D6D4;
+  --sw-indigo:      #4E5580;  --sw-indigo-soft: #D8D9E2;
+
+  /* Other */
+  --sw-radius:      3px;
+  --sw-radius-lg:   4px;
+  --sw-mono: 'Space Mono', 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
+  --sw-sans: 'Barlow', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* hyper-local: modal backdrop. Not a Switchboard token (modals aren't a
+   * Switchboard component); the scrim is intentionally semi-transparent and
+   * not bound to the accent system. */
+  --hy-backdrop: rgba(20, 20, 20, 0.45);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111;
-    --fg: #eee;
-    --muted: #999;
-    --border: #333;
-    --accent: #6af;
-    --danger: #f66;
-    --tag-bg: #222;
-  }
+[data-theme="dark"] {
+  --sw-bg-deep:     #0E1012;
+  --sw-bg:          #15171A;
+  --sw-bg-raised:   #1D2024;
+  --sw-bg-bright:   #25282D;
+  --sw-text:        #DDDCDA;
+  --sw-text-mid:    #9E9C98;
+  --sw-text-soft:   #6E6C68;
+  --sw-border:      #2F3338;
+  --sw-border-soft: #24272B;
+  --sw-rule:        #3A3E44;
+
+  --sw-orange:      #D4672E;  --sw-orange-soft: #2E1F18;
+  --sw-teal:        #3A9BA3;  --sw-teal-soft:   #16272A;
+  --sw-green:       #5A9B5E;  --sw-green-soft:  #18261A;
+  --sw-amber:       #C49540;  --sw-amber-soft:  #2A2316;
+  --sw-red:         #D05048;  --sw-red-soft:    #2C1A18;
+  --sw-indigo:      #7E86B8;  --sw-indigo-soft: #1E2030;
+
+  --hy-backdrop: rgba(0, 0, 0, 0.7);
 }
+
+/* --- Resets + base --- */
 
 * { box-sizing: border-box; }
 
 body {
-  margin: 0;
-  padding: 1.5rem;
-  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  background: var(--bg);
-  color: var(--fg);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
   max-width: 800px;
-  margin-inline: auto;
+  font-family: var(--sw-sans);
+  font-size: 14.5px;
+  line-height: 1.55;
+  background: var(--sw-bg);
+  color: var(--sw-text);
 }
 
-h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
-h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; color: var(--muted); }
+h1 {
+  font-family: var(--sw-sans);
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.3rem;
+  line-height: 1.2;
+}
 
-.hyper-header { margin-bottom: 1.5rem; }
-.hyper-summary { margin: 0; color: var(--muted); }
-.hyper-summary .muted { color: var(--muted); }
+h2 {
+  font-family: var(--sw-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 1.5rem 0 0.6rem;
+}
+
+/* --- Header --- */
+
+.hyper-header { margin-bottom: 1.25rem; }
+.hyper-summary {
+  margin: 0;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--sw-text-mid);
+}
+.hyper-summary .muted { color: var(--sw-text-soft); }
+.hyper-summary .sep { color: var(--sw-text-soft); padding: 0 0.15rem; }
+
+/* --- Tool row (panel) --- */
 
 .hyper-tool {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 0.5rem;
-  background: var(--bg);
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius-lg);
+  background: var(--sw-bg-raised);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.6rem;
 }
 
 .hyper-tool__head {
   display: flex;
   align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 0.25rem;
+  gap: 0.6rem;
+  margin-bottom: 0.45rem;
 }
-.hyper-tool__name { font-weight: 600; font-size: 1.05rem; }
-.hyper-tool__version { color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9rem; }
+.hyper-tool__name {
+  font-family: var(--sw-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--sw-text);
+}
+.hyper-tool__version {
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  color: var(--sw-text-soft);
+}
+
+/* "inferred" tag — Switchboard badge pattern, info (teal) variant. */
 .hyper-tool__tag {
-  background: var(--tag-bg);
-  padding: 0 0.4rem;
-  border-radius: 3px;
-  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--sw-teal-soft);
+  color: var(--sw-teal);
+  font-family: var(--sw-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--sw-radius);
+}
+.hyper-tool__tag::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .hyper-tool__stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 0 1.5rem;
-  color: var(--muted);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 0.85rem;
-  margin-bottom: 0.5rem;
+  gap: 0.2rem 1.5rem;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--sw-text-soft);
+  margin-bottom: 0.6rem;
 }
 
 .hyper-tool__actions,
 .hyper-global-actions {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.45rem;
   flex-wrap: wrap;
 }
 
 .hyper-global-actions { margin-top: 1.5rem; }
 
+/* --- Buttons — Switchboard §6.2 --- */
+
 .hyper-btn {
-  font: inherit;
-  padding: 0.35rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--bg);
-  color: var(--fg);
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 0.6rem 0.85rem;
+  min-height: 32px;
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius);
+  background: transparent;
+  color: var(--sw-text);
   cursor: pointer;
 }
-.hyper-btn:hover { border-color: var(--accent); color: var(--accent); }
-.hyper-btn--danger { border-color: var(--danger); color: var(--danger); }
-.hyper-btn--danger:hover { background: var(--danger); color: var(--bg); }
+.hyper-btn:hover {
+  border-color: var(--sw-orange);
+  color: var(--sw-orange);
+}
+.hyper-btn:focus-visible {
+  outline: 2px solid var(--sw-orange);
+  outline-offset: 1px;
+}
+
+/* Danger variant — uses red (fault). Switchboard §3 reserves red for
+ * faults; destructive actions are fault-class operations on user state. */
+.hyper-btn--danger {
+  border-color: var(--sw-red);
+  color: var(--sw-red);
+}
+.hyper-btn--danger:hover {
+  background: var(--sw-red);
+  color: var(--sw-bg);
+}
+.hyper-btn--danger:focus-visible {
+  outline-color: var(--sw-red);
+}
+
+.hyper-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.hyper-btn[disabled]:hover {
+  border-color: var(--sw-border);
+  color: var(--sw-text);
+  background: transparent;
+}
+
+/* --- Unattributed / Malformed --- */
 
 .hyper-unattributed,
-.hyper-malformed { margin-top: 1.5rem; color: var(--muted); }
+.hyper-malformed { margin-top: 1.5rem; color: var(--sw-text-mid); }
+.hyper-unattributed p,
+.hyper-malformed p {
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+}
 .hyper-malformed ul { margin: 0; padding-left: 1.25rem; }
-.hyper-malformed li { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; }
+.hyper-malformed li {
+  font-family: var(--sw-mono);
+  font-size: 0.8rem;
+  color: var(--sw-text-mid);
+}
 
 .hyper-error {
-  color: var(--danger);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--sw-red);
+  font-family: var(--sw-mono);
+  font-size: 0.85rem;
   white-space: pre-wrap;
+}
+
+/* --- Modal dialogs ---
+ * Switchboard has no canonical modal component. Built here using the panel
+ * register (--sw-bg-raised body, 1px border, no shadow per §10) plus a scrim. */
+
+.hyper-dialog {
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius-lg);
+  background: var(--sw-bg-raised);
+  color: var(--sw-text);
+  padding: 1.25rem;
+  max-width: min(28rem, calc(100vw - 2rem));
+  font-family: var(--sw-sans);
+}
+.hyper-dialog::backdrop {
+  background: var(--hy-backdrop);
+}
+.hyper-dialog--danger { border-color: var(--sw-red); }
+
+.hyper-dialog__title {
+  font-family: var(--sw-sans);
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: var(--sw-text);
+  /* override the global h2 mono-uppercase treatment */
+  letter-spacing: 0;
+  text-transform: none;
+}
+.hyper-dialog--danger .hyper-dialog__title { color: var(--sw-red); }
+
+.hyper-dialog__body {
+  margin: 0 0 0.85rem;
+  color: var(--sw-text-mid);
+  white-space: pre-wrap;
+}
+.hyper-dialog__prompt {
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 0 0 0.35rem;
+}
+.hyper-dialog__input {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  font-family: var(--sw-mono);
+  font-size: 0.9rem;
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius);
+  background: var(--sw-bg);
+  color: var(--sw-text);
+  margin-bottom: 1rem;
+}
+.hyper-dialog__input:focus {
+  outline: none;
+  border-color: var(--sw-orange);
+  box-shadow: 0 0 0 3px var(--sw-orange-soft);
+}
+.hyper-dialog--danger .hyper-dialog__input:focus {
+  border-color: var(--sw-red);
+  box-shadow: 0 0 0 3px var(--sw-red-soft);
+}
+
+.hyper-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+/* --- Show-details (per-tool) --- */
+
+.hyper-tool__details {
+  margin-top: 0.85rem;
+  border-top: 1px dashed var(--sw-border-soft);
+  padding-top: 0.6rem;
+}
+.hyper-tool__details summary {
+  cursor: pointer;
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  user-select: none;
+}
+.hyper-tool__details summary:hover { color: var(--sw-orange); }
+.hyper-tool__details[open] summary { margin-bottom: 0.6rem; }
+
+.hyper-detail-section { margin: 0.6rem 0 0.85rem; }
+.hyper-detail-section h3 {
+  font-family: var(--sw-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 0 0 0.3rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--sw-border-soft);
+}
+.hyper-detail-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  color: var(--sw-text);
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.hyper-detail-list li { word-break: break-all; }
+
+.hyper-detail-kv {
+  margin: 0;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  border-collapse: collapse;
+  width: 100%;
+}
+.hyper-detail-kv th,
+.hyper-detail-kv dt {
+  text-align: left;
+  font-weight: 400;
+  color: var(--sw-text-soft);
+  padding: 0.15rem 0.6rem 0.15rem 0;
+  vertical-align: top;
+  white-space: nowrap;
+  letter-spacing: 0.06em;
+}
+.hyper-detail-kv td,
+.hyper-detail-kv dd {
+  margin: 0;
+  padding: 0.15rem 0;
+  color: var(--sw-text);
+  word-break: break-all;
 }
 </style>
 </head>
@@ -907,6 +1208,41 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
+// Build the "show details" payload for a tool — cross-references the tool's
+// claimed storage names against the rich inspect data, returning the per-cache
+// URL list, per-IDB stores, LS key/value pairs, and SW details.
+function buildToolDetails(tool, inspectResult) {
+  const cacheMap = new Map(inspectResult.caches.map((c) => [c.name, c]));
+  const idbMap = new Map(inspectResult.idbs.map((i) => [i.name, i]));
+  const lsMap = new Map(inspectResult.localStorage);
+  const swMap = new Map(inspectResult.swRegistrations.map((r) => [normalizeScope(r.scope), r]));
+
+  return {
+    caches: (tool.storage.cacheNames || [])
+      .map((n) => cacheMap.get(n))
+      .filter(Boolean)
+      .map((c) => ({ name: c.name, urls: c.entryUrls || [] })),
+    idbs: (tool.storage.idbNames || [])
+      .map((n) => idbMap.get(n))
+      .filter(Boolean)
+      .map((i) => ({ name: i.name, version: i.version, stores: i.stores || [] })),
+    localStorage: (tool.storage.localStorageKeys || [])
+      .filter((k) => lsMap.has(k))
+      .map((k) => [k, lsMap.get(k)]),
+    sws: (tool.storage.swScopes || [])
+      .map((s) => swMap.get(s))
+      .filter(Boolean)
+      .map((r) => ({ scope: r.scope, scriptURL: r.scriptURL, state: r.state })),
+  };
+}
+
+// Inline copy of inspect.normalizeScope. Kept here so render.js stays
+// callable in node tests without requiring inspect.js (which depends on
+// browser globals at top-level via async functions). Cheap and pure.
+function normalizeScope(scope) {
+  try { return new URL(scope).pathname; } catch { return scope; }
+}
+
 function decorateTool(tool, inspectResult) {
   const cacheMap = new Map(inspectResult.caches.map((c) => [c.name, c]));
   const idbMap = new Map(inspectResult.idbs.map((i) => [i.name, i]));
@@ -981,12 +1317,12 @@ function renderToolList(state) {
     return list;
   }
   for (const tool of state.detectResult.tools) {
-    list.appendChild(renderToolRow(decorateTool(tool, state.inspectResult)));
+    list.appendChild(renderToolRow(decorateTool(tool, state.inspectResult), tool, state.inspectResult));
   }
   return list;
 }
 
-function renderToolRow(t) {
+function renderToolRow(t, tool, inspectResult) {
   const row = el('article', { class: `hyper-tool hyper-tool--${t.source}`, data: { tool: t.name } });
   const head = el('div', { class: 'hyper-tool__head' });
   head.appendChild(el('span', { class: 'hyper-tool__name', text: t.displayName }));
@@ -1007,7 +1343,66 @@ function renderToolRow(t) {
   actions.appendChild(actionButton('Reset', 'reset-tool', t.name, 'danger'));
   row.appendChild(actions);
 
+  row.appendChild(renderToolDetails(buildToolDetails(tool, inspectResult)));
   return row;
+}
+
+function renderToolDetails(details) {
+  const wrap = el('details', { class: 'hyper-tool__details' });
+  wrap.appendChild(el('summary', { text: 'Show details' }));
+
+  if (details.caches.length === 0 && details.idbs.length === 0 && details.localStorage.length === 0 && details.sws.length === 0) {
+    wrap.appendChild(el('p', { class: 'muted', text: 'No storage to inspect.' }));
+    return wrap;
+  }
+
+  for (const c of details.caches) {
+    const section = el('div', { class: 'hyper-detail-section' });
+    section.appendChild(el('h3', { text: `cache: ${c.name} (${c.urls.length} entries)` }));
+    if (c.urls.length) {
+      const ul = el('ul', { class: 'hyper-detail-list' });
+      for (const u of c.urls) ul.appendChild(el('li', { text: u }));
+      section.appendChild(ul);
+    }
+    wrap.appendChild(section);
+  }
+  for (const i of details.idbs) {
+    const section = el('div', { class: 'hyper-detail-section' });
+    section.appendChild(el('h3', { text: `IDB: ${i.name}${i.version != null ? ` (v${i.version})` : ''}` }));
+    if (i.stores.length) {
+      const ul = el('ul', { class: 'hyper-detail-list' });
+      for (const s of i.stores) ul.appendChild(el('li', { text: `${s.name}: ${s.recordCount} record${s.recordCount === 1 ? '' : 's'}` }));
+      section.appendChild(ul);
+    }
+    wrap.appendChild(section);
+  }
+  if (details.localStorage.length) {
+    const section = el('div', { class: 'hyper-detail-section' });
+    section.appendChild(el('h3', { text: 'localStorage' }));
+    const table = el('table', { class: 'hyper-detail-kv' });
+    for (const [k, v] of details.localStorage) {
+      const tr = el('tr');
+      tr.appendChild(el('th', { text: k, attrs: { scope: 'row' } }));
+      tr.appendChild(el('td', { text: v }));
+      table.appendChild(tr);
+    }
+    section.appendChild(table);
+    wrap.appendChild(section);
+  }
+  for (const sw of details.sws) {
+    const section = el('div', { class: 'hyper-detail-section' });
+    section.appendChild(el('h3', { text: `SW: ${sw.scope}` }));
+    const dl = el('dl', { class: 'hyper-detail-kv' });
+    dl.appendChild(el('dt', { text: 'state' }));
+    dl.appendChild(el('dd', { text: sw.state }));
+    if (sw.scriptURL) {
+      dl.appendChild(el('dt', { text: 'script' }));
+      dl.appendChild(el('dd', { text: sw.scriptURL }));
+    }
+    section.appendChild(dl);
+    wrap.appendChild(section);
+  }
+  return wrap;
 }
 
 function renderUnattributed(unattributed) {
@@ -1068,8 +1463,95 @@ function el(tag, opts = {}) {
   return node;
 }
 
+// --- Modal dialogs --------------------------------------------------------
+
+// Pure: case-sensitive equality after trimming. Used by confirmWithPhrase and
+// callable independently for testing.
+function isPhraseAccepted(input, required) {
+  return typeof input === 'string' && input.trim() === required;
+}
+
+function confirmDialog({ title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false }) {
+  return new Promise((resolve) => {
+    const dialog = el('dialog', { class: 'hyper-dialog' });
+    if (title) dialog.appendChild(el('h2', { class: 'hyper-dialog__title', text: title }));
+    if (body) dialog.appendChild(el('p', { class: 'hyper-dialog__body', text: body }));
+    const actions = el('div', { class: 'hyper-dialog__actions' });
+    const cancel = el('button', { class: 'hyper-btn', text: cancelLabel, attrs: { type: 'button' } });
+    const confirm = el('button', {
+      class: `hyper-btn${danger ? ' hyper-btn--danger' : ''}`,
+      text: confirmLabel,
+      attrs: { type: 'button' },
+    });
+    actions.appendChild(cancel);
+    actions.appendChild(confirm);
+    dialog.appendChild(actions);
+
+    let result = false;
+    cancel.addEventListener('click', () => { result = false; dialog.close(); });
+    confirm.addEventListener('click', () => { result = true; dialog.close(); });
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(result); });
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    cancel.focus();
+  });
+}
+
+function confirmWithPhrase({ title, body, phrase, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
+  return new Promise((resolve) => {
+    const dialog = el('dialog', { class: 'hyper-dialog hyper-dialog--danger' });
+    if (title) dialog.appendChild(el('h2', { class: 'hyper-dialog__title', text: title }));
+    if (body) dialog.appendChild(el('p', { class: 'hyper-dialog__body', text: body }));
+    dialog.appendChild(el('p', { class: 'hyper-dialog__prompt', text: `Type "${phrase}" to confirm:` }));
+    const input = el('input', { class: 'hyper-dialog__input', attrs: { type: 'text', autocomplete: 'off' } });
+    dialog.appendChild(input);
+
+    const actions = el('div', { class: 'hyper-dialog__actions' });
+    const cancel = el('button', { class: 'hyper-btn', text: cancelLabel, attrs: { type: 'button' } });
+    const confirm = el('button', {
+      class: 'hyper-btn hyper-btn--danger',
+      text: confirmLabel,
+      attrs: { type: 'button', disabled: '' },
+    });
+    actions.appendChild(cancel);
+    actions.appendChild(confirm);
+    dialog.appendChild(actions);
+
+    let result = false;
+    const sync = () => {
+      if (isPhraseAccepted(input.value, phrase)) confirm.removeAttribute('disabled');
+      else confirm.setAttribute('disabled', '');
+    };
+    input.addEventListener('input', sync);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && isPhraseAccepted(input.value, phrase)) {
+        e.preventDefault();
+        result = true;
+        dialog.close();
+      }
+    });
+    cancel.addEventListener('click', () => { result = false; dialog.close(); });
+    confirm.addEventListener('click', () => {
+      if (isPhraseAccepted(input.value, phrase)) { result = true; dialog.close(); }
+    });
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(result); });
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    input.focus();
+  });
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { formatBytes, decorateTool, summaryStats, hasUnattributed };
+  module.exports = {
+    formatBytes,
+    decorateTool,
+    buildToolDetails,
+    summaryStats,
+    hasUnattributed,
+    isPhraseAccepted,
+  };
 }
 
 // Entry point. Concatenated last by build.js, so functions from detect /
@@ -1127,7 +1609,13 @@ async function dispatch(action, tool) {
     case 'reset-tool': {
       if (!tool) return false;
       const plan = planResetTool(tool);
-      if (!confirm(`Reset ${tool.name}? Will delete: ${describePlan(plan)}.`)) return false;
+      const ok = await confirmDialog({
+        title: `Reset ${tool.name}?`,
+        body: `Will delete: ${describePlan(plan)}.`,
+        confirmLabel: 'Reset',
+        danger: true,
+      });
+      if (!ok) return false;
       await resetTool(tool);
       return true;
     }
@@ -1139,15 +1627,24 @@ async function dispatch(action, tool) {
     case 'refresh-all': {
       const n = currentState.detectResult.tools.length;
       if (n === 0) return false;
-      if (!confirm(`Refresh all tools? Will clear caches and unregister SWs for ${n} tool${n === 1 ? '' : 's'}.`)) return false;
+      const ok = await confirmDialog({
+        title: 'Refresh all tools?',
+        body: `Will clear caches and unregister service workers for ${n} tool${n === 1 ? '' : 's'}. User data (IDB, localStorage) is preserved.`,
+        confirmLabel: 'Refresh all',
+      });
+      if (!ok) return false;
       await refreshAllTools(currentState.detectResult);
       return true;
     }
     case 'nuke': {
       const plan = planNuke(currentState.inspectResult);
-      const summary = describePlan(plan);
-      const input = prompt(`NUKE EVERYTHING on this origin.\n\nWill delete: ${summary}.\n\nType "delete" to confirm:`);
-      if (input !== 'delete') return false;
+      const ok = await confirmWithPhrase({
+        title: 'Nuke everything on this origin',
+        body: `Will delete: ${describePlan(plan)}.\n\nThis cannot be undone. Export first if you want your data back.`,
+        phrase: 'delete',
+        confirmLabel: 'Nuke',
+      });
+      if (!ok) return false;
       await nukeOrigin(currentState.inspectResult);
       return true;
     }

@@ -4,6 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>hyper — GCU storage inspector</title>
+  <script>
+    // Switchboard theme bootstrap. Runs before <body> renders so the
+    // first paint is already on the correct surface — no FOUC. Mirrors
+    // OS preference; persistence (localStorage) deferred.
+    (function () {
+      var mq = window.matchMedia('(prefers-color-scheme: dark)');
+      // Switchboard convention: dark sets attribute, light leaves it absent.
+      var apply = function (dark) {
+        if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+        else document.documentElement.removeAttribute('data-theme');
+      };
+      apply(mq.matches);
+      mq.addEventListener('change', function (e) { apply(e.matches); });
+    })();
+  </script>
   <style>/*__STYLE__*/</style>
 </head>
 <body>

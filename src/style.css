@@ -1,111 +1,397 @@
-/* Minimal v0.1 styling. Switchboard tokens will replace these later. */
+/* hyper — uses Switchboard 1.0 tokens.
+ * Tokens here mirror Switchboard SPEC §2-4 (surfaces / accents / other).
+ * Component CSS reads --sw-* directly (no semantic indirection — hyper is
+ * small enough to skip the --au-* style re-skinnability layer that
+ * auditable uses).
+ *
+ * Light is :root (equipment gray); dark is [data-theme="dark"] on <html>.
+ * The theme attribute is set by main.js from prefers-color-scheme on boot.
+ * Fonts fall back to system stacks (the woff2 binaries are not embedded;
+ * Barlow / Space Mono load when the user has them installed locally).
+ */
 
 :root {
-  --bg: #fafafa;
-  --fg: #111;
-  --muted: #666;
-  --border: #ddd;
-  --accent: #06c;
-  --danger: #c33;
-  --tag-bg: #eee;
+  /* Surfaces — equipment gray */
+  --sw-bg-deep:     #C2C1BE;
+  --sw-bg:          #D2D1CE;
+  --sw-bg-raised:   #E4E3E1;
+  --sw-bg-bright:   #EDECEB;
+  --sw-text:        #232322;
+  --sw-text-mid:    #504F4C;
+  --sw-text-soft:   #7A7875;
+  --sw-border:      #B3B1AD;
+  --sw-border-soft: #C6C4C1;
+  --sw-rule:        #A5A3A0;
+
+  /* Accents — light */
+  --sw-orange:      #B54E1A;  --sw-orange-soft: #E8D8CF;
+  --sw-teal:        #1B6B72;  --sw-teal-soft:   #CEE2E4;
+  --sw-green:       #3D7340;  --sw-green-soft:  #D2E4D4;
+  --sw-amber:       #8E6518;  --sw-amber-soft:  #E4DCCC;
+  --sw-red:         #A8312A;  --sw-red-soft:    #E8D6D4;
+  --sw-indigo:      #4E5580;  --sw-indigo-soft: #D8D9E2;
+
+  /* Other */
+  --sw-radius:      3px;
+  --sw-radius-lg:   4px;
+  --sw-mono: 'Space Mono', 'JetBrains Mono', 'Consolas', ui-monospace, monospace;
+  --sw-sans: 'Barlow', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* hyper-local: modal backdrop. Not a Switchboard token (modals aren't a
+   * Switchboard component); the scrim is intentionally semi-transparent and
+   * not bound to the accent system. */
+  --hy-backdrop: rgba(20, 20, 20, 0.45);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111;
-    --fg: #eee;
-    --muted: #999;
-    --border: #333;
-    --accent: #6af;
-    --danger: #f66;
-    --tag-bg: #222;
-  }
+[data-theme="dark"] {
+  --sw-bg-deep:     #0E1012;
+  --sw-bg:          #15171A;
+  --sw-bg-raised:   #1D2024;
+  --sw-bg-bright:   #25282D;
+  --sw-text:        #DDDCDA;
+  --sw-text-mid:    #9E9C98;
+  --sw-text-soft:   #6E6C68;
+  --sw-border:      #2F3338;
+  --sw-border-soft: #24272B;
+  --sw-rule:        #3A3E44;
+
+  --sw-orange:      #D4672E;  --sw-orange-soft: #2E1F18;
+  --sw-teal:        #3A9BA3;  --sw-teal-soft:   #16272A;
+  --sw-green:       #5A9B5E;  --sw-green-soft:  #18261A;
+  --sw-amber:       #C49540;  --sw-amber-soft:  #2A2316;
+  --sw-red:         #D05048;  --sw-red-soft:    #2C1A18;
+  --sw-indigo:      #7E86B8;  --sw-indigo-soft: #1E2030;
+
+  --hy-backdrop: rgba(0, 0, 0, 0.7);
 }
+
+/* --- Resets + base --- */
 
 * { box-sizing: border-box; }
 
 body {
-  margin: 0;
-  padding: 1.5rem;
-  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  background: var(--bg);
-  color: var(--fg);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
   max-width: 800px;
-  margin-inline: auto;
+  font-family: var(--sw-sans);
+  font-size: 14.5px;
+  line-height: 1.55;
+  background: var(--sw-bg);
+  color: var(--sw-text);
 }
 
-h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
-h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; color: var(--muted); }
+h1 {
+  font-family: var(--sw-sans);
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.3rem;
+  line-height: 1.2;
+}
 
-.hyper-header { margin-bottom: 1.5rem; }
-.hyper-summary { margin: 0; color: var(--muted); }
-.hyper-summary .muted { color: var(--muted); }
+h2 {
+  font-family: var(--sw-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 1.5rem 0 0.6rem;
+}
+
+/* --- Header --- */
+
+.hyper-header { margin-bottom: 1.25rem; }
+.hyper-summary {
+  margin: 0;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--sw-text-mid);
+}
+.hyper-summary .muted { color: var(--sw-text-soft); }
+.hyper-summary .sep { color: var(--sw-text-soft); padding: 0 0.15rem; }
+
+/* --- Tool row (panel) --- */
 
 .hyper-tool {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 0.5rem;
-  background: var(--bg);
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius-lg);
+  background: var(--sw-bg-raised);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.6rem;
 }
 
 .hyper-tool__head {
   display: flex;
   align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 0.25rem;
+  gap: 0.6rem;
+  margin-bottom: 0.45rem;
 }
-.hyper-tool__name { font-weight: 600; font-size: 1.05rem; }
-.hyper-tool__version { color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9rem; }
+.hyper-tool__name {
+  font-family: var(--sw-mono);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--sw-text);
+}
+.hyper-tool__version {
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  color: var(--sw-text-soft);
+}
+
+/* "inferred" tag — Switchboard badge pattern, info (teal) variant. */
 .hyper-tool__tag {
-  background: var(--tag-bg);
-  padding: 0 0.4rem;
-  border-radius: 3px;
-  font-size: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--sw-teal-soft);
+  color: var(--sw-teal);
+  font-family: var(--sw-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--sw-radius);
+}
+.hyper-tool__tag::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .hyper-tool__stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 0 1.5rem;
-  color: var(--muted);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 0.85rem;
-  margin-bottom: 0.5rem;
+  gap: 0.2rem 1.5rem;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--sw-text-soft);
+  margin-bottom: 0.6rem;
 }
 
 .hyper-tool__actions,
 .hyper-global-actions {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.45rem;
   flex-wrap: wrap;
 }
 
 .hyper-global-actions { margin-top: 1.5rem; }
 
+/* --- Buttons — Switchboard §6.2 --- */
+
 .hyper-btn {
-  font: inherit;
-  padding: 0.35rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--bg);
-  color: var(--fg);
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 0.6rem 0.85rem;
+  min-height: 32px;
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius);
+  background: transparent;
+  color: var(--sw-text);
   cursor: pointer;
 }
-.hyper-btn:hover { border-color: var(--accent); color: var(--accent); }
-.hyper-btn--danger { border-color: var(--danger); color: var(--danger); }
-.hyper-btn--danger:hover { background: var(--danger); color: var(--bg); }
+.hyper-btn:hover {
+  border-color: var(--sw-orange);
+  color: var(--sw-orange);
+}
+.hyper-btn:focus-visible {
+  outline: 2px solid var(--sw-orange);
+  outline-offset: 1px;
+}
+
+/* Danger variant — uses red (fault). Switchboard §3 reserves red for
+ * faults; destructive actions are fault-class operations on user state. */
+.hyper-btn--danger {
+  border-color: var(--sw-red);
+  color: var(--sw-red);
+}
+.hyper-btn--danger:hover {
+  background: var(--sw-red);
+  color: var(--sw-bg);
+}
+.hyper-btn--danger:focus-visible {
+  outline-color: var(--sw-red);
+}
+
+.hyper-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.hyper-btn[disabled]:hover {
+  border-color: var(--sw-border);
+  color: var(--sw-text);
+  background: transparent;
+}
+
+/* --- Unattributed / Malformed --- */
 
 .hyper-unattributed,
-.hyper-malformed { margin-top: 1.5rem; color: var(--muted); }
+.hyper-malformed { margin-top: 1.5rem; color: var(--sw-text-mid); }
+.hyper-unattributed p,
+.hyper-malformed p {
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+}
 .hyper-malformed ul { margin: 0; padding-left: 1.25rem; }
-.hyper-malformed li { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85rem; }
+.hyper-malformed li {
+  font-family: var(--sw-mono);
+  font-size: 0.8rem;
+  color: var(--sw-text-mid);
+}
 
 .hyper-error {
-  color: var(--danger);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--sw-red);
+  font-family: var(--sw-mono);
+  font-size: 0.85rem;
   white-space: pre-wrap;
+}
+
+/* --- Modal dialogs ---
+ * Switchboard has no canonical modal component. Built here using the panel
+ * register (--sw-bg-raised body, 1px border, no shadow per §10) plus a scrim. */
+
+.hyper-dialog {
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius-lg);
+  background: var(--sw-bg-raised);
+  color: var(--sw-text);
+  padding: 1.25rem;
+  max-width: min(28rem, calc(100vw - 2rem));
+  font-family: var(--sw-sans);
+}
+.hyper-dialog::backdrop {
+  background: var(--hy-backdrop);
+}
+.hyper-dialog--danger { border-color: var(--sw-red); }
+
+.hyper-dialog__title {
+  font-family: var(--sw-sans);
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: var(--sw-text);
+  /* override the global h2 mono-uppercase treatment */
+  letter-spacing: 0;
+  text-transform: none;
+}
+.hyper-dialog--danger .hyper-dialog__title { color: var(--sw-red); }
+
+.hyper-dialog__body {
+  margin: 0 0 0.85rem;
+  color: var(--sw-text-mid);
+  white-space: pre-wrap;
+}
+.hyper-dialog__prompt {
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 0 0 0.35rem;
+}
+.hyper-dialog__input {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  font-family: var(--sw-mono);
+  font-size: 0.9rem;
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius);
+  background: var(--sw-bg);
+  color: var(--sw-text);
+  margin-bottom: 1rem;
+}
+.hyper-dialog__input:focus {
+  outline: none;
+  border-color: var(--sw-orange);
+  box-shadow: 0 0 0 3px var(--sw-orange-soft);
+}
+.hyper-dialog--danger .hyper-dialog__input:focus {
+  border-color: var(--sw-red);
+  box-shadow: 0 0 0 3px var(--sw-red-soft);
+}
+
+.hyper-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+/* --- Show-details (per-tool) --- */
+
+.hyper-tool__details {
+  margin-top: 0.85rem;
+  border-top: 1px dashed var(--sw-border-soft);
+  padding-top: 0.6rem;
+}
+.hyper-tool__details summary {
+  cursor: pointer;
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  user-select: none;
+}
+.hyper-tool__details summary:hover { color: var(--sw-orange); }
+.hyper-tool__details[open] summary { margin-bottom: 0.6rem; }
+
+.hyper-detail-section { margin: 0.6rem 0 0.85rem; }
+.hyper-detail-section h3 {
+  font-family: var(--sw-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 0 0 0.3rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--sw-border-soft);
+}
+.hyper-detail-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  color: var(--sw-text);
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.hyper-detail-list li { word-break: break-all; }
+
+.hyper-detail-kv {
+  margin: 0;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  border-collapse: collapse;
+  width: 100%;
+}
+.hyper-detail-kv th,
+.hyper-detail-kv dt {
+  text-align: left;
+  font-weight: 400;
+  color: var(--sw-text-soft);
+  padding: 0.15rem 0.6rem 0.15rem 0;
+  vertical-align: top;
+  white-space: nowrap;
+  letter-spacing: 0.06em;
+}
+.hyper-detail-kv td,
+.hyper-detail-kv dd {
+  margin: 0;
+  padding: 0.15rem 0;
+  color: var(--sw-text);
+  word-break: break-all;
 }
