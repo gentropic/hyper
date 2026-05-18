@@ -413,7 +413,7 @@ Same trajectory shape as ep:
 
 - **v0.1 (shipped)** — inspector + selective clear + export + force-refresh. Single deployed artifact at `gentropic.org/hyper/`. ep adopts the `gcu:tool` announcement convention.
 - **v0.2 (shipped)** — visual storage breakdown (opt-in, gated behind a Compute button to preserve fast first-paint). `indexedDB.databases()` fallback for browsers that lack it. Documented portable-deployment story (origin-root / third-party-cohost / standalone `file://`).
-- **v0.3 (shipped)** — persistent diagnostics via the `gcu:log:<name>` localStorage convention: tools write small bounded rings, hyper surfaces them per-tool in show-details. Pattern detection ("ep brick'd 3× this week") deferred to v0.4. (Multi-origin awareness was on the original v0.3 list but the cross-origin browser model makes it expensive; deferred until there's a concrete user.)
+- **v0.3 (shipped)** — persistent diagnostics via the `gcu:log:<name>` localStorage convention: tools write small bounded rings, hyper surfaces them per-tool in show-details. Pattern detection ("ep brick'd 3× this week") considered and dropped — hyper is reactive (you open it when something's wrong, at which point the raw timeline is right there), so proactive alerts add maintenance surface without matching the tool's role. (Multi-origin awareness was on the original v0.3 list but the cross-origin browser model makes it expensive; deferred until there's a concrete user.)
 - **v1.0** — stable JSON export/import contract. Documented for third-party GCU-shaped tools that want to participate.
 
 Calculator-scale tool. Probably plateaus near v0.5 and stays there for a long time.
