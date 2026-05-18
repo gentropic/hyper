@@ -19,24 +19,35 @@ function formatBytes(bytes) {
 // claimed storage names against the rich inspect data, returning the per-cache
 // URL list, per-IDB stores, LS key/value pairs, and SW details.
 function buildToolDetails(tool, inspectResult) {
+  return crossReferenceStorage(tool.storage, inspectResult);
+}
+
+// Same shape as buildToolDetails plus the full sessionStorage bucket (no
+// tool announces SS ownership, so it's always unattributed).
+function buildUnattributedDetails(unattributed, inspectResult) {
+  const details = crossReferenceStorage(unattributed, inspectResult);
+  details.sessionStorage = inspectResult.sessionStorage || [];
+  return details;
+}
+
+function crossReferenceStorage(claim, inspectResult) {
   const cacheMap = new Map(inspectResult.caches.map((c) => [c.name, c]));
   const idbMap = new Map(inspectResult.idbs.map((i) => [i.name, i]));
   const lsMap = new Map(inspectResult.localStorage);
   const swMap = new Map(inspectResult.swRegistrations.map((r) => [normalizeScope(r.scope), r]));
-
   return {
-    caches: (tool.storage.cacheNames || [])
+    caches: (claim.cacheNames || [])
       .map((n) => cacheMap.get(n))
       .filter(Boolean)
       .map((c) => ({ name: c.name, urls: c.entryUrls || [] })),
-    idbs: (tool.storage.idbNames || [])
+    idbs: (claim.idbNames || [])
       .map((n) => idbMap.get(n))
       .filter(Boolean)
       .map((i) => ({ name: i.name, version: i.version, stores: i.stores || [] })),
-    localStorage: (tool.storage.localStorageKeys || [])
+    localStorage: (claim.localStorageKeys || [])
       .filter((k) => lsMap.has(k))
       .map((k) => [k, lsMap.get(k)]),
-    sws: (tool.storage.swScopes || [])
+    sws: (claim.swScopes || [])
       .map((s) => swMap.get(s))
       .filter(Boolean)
       .map((r) => ({ scope: r.scope, scriptURL: r.scriptURL, state: r.state })),
@@ -84,8 +95,9 @@ function renderApp(state, root) {
   root.replaceChildren();
   root.appendChild(renderHeader(state));
   root.appendChild(renderToolList(state));
-  if (hasUnattributed(state.detectResult.unattributed)) {
-    root.appendChild(renderUnattributed(state.detectResult.unattributed));
+  const ssCount = state.inspectResult.sessionStorage.length;
+  if (hasUnattributed(state.detectResult.unattributed) || ssCount > 0) {
+    root.appendChild(renderUnattributed(state.detectResult.unattributed, state.inspectResult));
   }
   if (state.detectResult.malformed.length) {
     root.appendChild(renderMalformed(state.detectResult.malformed));
@@ -154,11 +166,26 @@ function renderToolRow(t, tool, inspectResult) {
   return row;
 }
 
+function renderKVSection(label, entries) {
+  const section = el('div', { class: 'hyper-detail-section' });
+  section.appendChild(el('h3', { text: label }));
+  const table = el('table', { class: 'hyper-detail-kv' });
+  for (const [k, v] of entries) {
+    const tr = el('tr');
+    tr.appendChild(el('th', { text: k, attrs: { scope: 'row' } }));
+    tr.appendChild(el('td', { text: v }));
+    table.appendChild(tr);
+  }
+  section.appendChild(table);
+  return section;
+}
+
 function renderToolDetails(details) {
   const wrap = el('details', { class: 'hyper-tool__details' });
   wrap.appendChild(el('summary', { text: 'Show details' }));
 
-  if (details.caches.length === 0 && details.idbs.length === 0 && details.localStorage.length === 0 && details.sws.length === 0) {
+  const ss = details.sessionStorage || [];
+  if (details.caches.length === 0 && details.idbs.length === 0 && details.localStorage.length === 0 && details.sws.length === 0 && ss.length === 0) {
     wrap.appendChild(el('p', { class: 'muted', text: 'No storage to inspect.' }));
     return wrap;
   }
@@ -184,17 +211,10 @@ function renderToolDetails(details) {
     wrap.appendChild(section);
   }
   if (details.localStorage.length) {
-    const section = el('div', { class: 'hyper-detail-section' });
-    section.appendChild(el('h3', { text: 'localStorage' }));
-    const table = el('table', { class: 'hyper-detail-kv' });
-    for (const [k, v] of details.localStorage) {
-      const tr = el('tr');
-      tr.appendChild(el('th', { text: k, attrs: { scope: 'row' } }));
-      tr.appendChild(el('td', { text: v }));
-      table.appendChild(tr);
-    }
-    section.appendChild(table);
-    wrap.appendChild(section);
+    wrap.appendChild(renderKVSection('localStorage', details.localStorage));
+  }
+  if (details.sessionStorage && details.sessionStorage.length) {
+    wrap.appendChild(renderKVSection('sessionStorage', details.sessionStorage));
   }
   for (const sw of details.sws) {
     const section = el('div', { class: 'hyper-detail-section' });
@@ -212,27 +232,39 @@ function renderToolDetails(details) {
   return wrap;
 }
 
-function renderUnattributed(unattributed) {
+function renderUnattributed(unattributed, inspectResult) {
   const section = el('section', { class: 'hyper-unattributed' });
   section.appendChild(el('h2', { text: 'Unattributed storage' }));
+  const ssCount = inspectResult.sessionStorage.length;
   const lines = [
     `${unattributed.cacheNames.length} cache${unattributed.cacheNames.length === 1 ? '' : 's'}`,
     `${unattributed.idbNames.length} IDB`,
     `${unattributed.localStorageKeys.length} LS keys`,
     `${unattributed.swScopes.length} SW`,
   ];
+  if (ssCount > 0) lines.push(`${ssCount} SS keys`);
   section.appendChild(el('p', { text: lines.join(' · ') }));
+
+  const actions = el('div', { class: 'hyper-tool__actions' });
+  actions.appendChild(actionButton('Export', 'export-unattributed'));
+  actions.appendChild(actionButton('Reset all', 'reset-unattributed', null, 'danger'));
+  section.appendChild(actions);
+
+  section.appendChild(renderToolDetails(buildUnattributedDetails(unattributed, inspectResult)));
   return section;
 }
 
 function renderMalformed(malformed) {
   const section = el('section', { class: 'hyper-malformed' });
   section.appendChild(el('h2', { text: 'Malformed announcements' }));
+  const wrap = el('details');
+  wrap.appendChild(el('summary', { text: `${malformed.length} malformed entr${malformed.length === 1 ? 'y' : 'ies'}` }));
   const ul = el('ul');
   for (const m of malformed) {
     ul.appendChild(el('li', { text: `${m.key}: ${m.reason}` }));
   }
-  section.appendChild(ul);
+  wrap.appendChild(ul);
+  section.appendChild(wrap);
   return section;
 }
 
@@ -305,6 +337,23 @@ function confirmDialog({ title, body, confirmLabel = 'Confirm', cancelLabel = 'C
   });
 }
 
+function messageDialog({ title, body, danger = false, label = 'Close' }) {
+  return new Promise((resolve) => {
+    const dialog = el('dialog', { class: `hyper-dialog${danger ? ' hyper-dialog--danger' : ''}` });
+    if (title) dialog.appendChild(el('h2', { class: 'hyper-dialog__title', text: title }));
+    if (body) dialog.appendChild(el('p', { class: 'hyper-dialog__body', text: body }));
+    const actions = el('div', { class: 'hyper-dialog__actions' });
+    const close = el('button', { class: 'hyper-btn', text: label, attrs: { type: 'button' } });
+    actions.appendChild(close);
+    dialog.appendChild(actions);
+    close.addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(); });
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    close.focus();
+  });
+}
+
 function confirmWithPhrase({ title, body, phrase, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) {
   return new Promise((resolve) => {
     const dialog = el('dialog', { class: 'hyper-dialog hyper-dialog--danger' });
@@ -355,6 +404,7 @@ if (typeof module !== 'undefined') {
     formatBytes,
     decorateTool,
     buildToolDetails,
+    buildUnattributedDetails,
     summaryStats,
     hasUnattributed,
     isPhraseAccepted,

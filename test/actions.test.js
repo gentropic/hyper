@@ -4,6 +4,7 @@ const {
   planResetTool,
   planForceRefresh,
   planNuke,
+  planResetUnattributed,
   pickToolURL,
   describePlan,
   scopePath,
@@ -61,6 +62,33 @@ test('planNuke: pulls everything from inspectResult', () => {
   assert.deepEqual(plan.idbNames, ['ep']);
   assert.deepEqual(plan.localStorageKeys, ['k1', 'k2']);
   assert.deepEqual(plan.sessionStorageKeys, ['s1']);
+});
+
+test('planResetUnattributed: includes all unattributed + all sessionStorage', () => {
+  const plan = planResetUnattributed(
+    {
+      unattributed: {
+        cacheNames: ['cache-x'],
+        swScopes: ['/x/'],
+        idbNames: ['mystery'],
+        localStorageKeys: ['stray'],
+      },
+    },
+    { sessionStorage: [['s1', 'v1'], ['s2', 'v2']] },
+  );
+  assert.deepEqual(plan.cacheNames, ['cache-x']);
+  assert.deepEqual(plan.swScopes, ['/x/']);
+  assert.deepEqual(plan.idbNames, ['mystery']);
+  assert.deepEqual(plan.localStorageKeys, ['stray']);
+  assert.deepEqual(plan.sessionStorageKeys, ['s1', 's2']);
+});
+
+test('planResetUnattributed: empty unattributed + empty SS → empty plan', () => {
+  const plan = planResetUnattributed(
+    { unattributed: { cacheNames: [], swScopes: [], idbNames: [], localStorageKeys: [] } },
+    { sessionStorage: [] },
+  );
+  assert.deepEqual(plan, { cacheNames: [], swScopes: [], idbNames: [], localStorageKeys: [], sessionStorageKeys: [] });
 });
 
 test('pickToolURL: prefers announcement homepage', () => {

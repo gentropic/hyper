@@ -139,6 +139,24 @@ async function exportAll(state) {
   return bundle;
 }
 
+async function exportUnattributed(state) {
+  const idbContents = await readManyIdbs(state.detectResult.unattributed.idbNames || []);
+  const synthetic = {
+    tools: [],
+    unattributed: state.detectResult.unattributed,
+    malformed: [],
+  };
+  const bundle = buildBundle({
+    detectResult: synthetic,
+    idbContents,
+    lsEntries: state.inspectResult.localStorage,
+    ssEntries: state.inspectResult.sessionStorage,
+    origin: state.origin,
+  });
+  downloadBundle(bundle, `hyper-export-unattributed-${filenameTimestamp()}.json`);
+  return bundle;
+}
+
 async function exportTool(state, toolName) {
   const tool = state.detectResult.tools.find((t) => t.name === toolName);
   if (!tool) throw new Error(`tool not found: ${toolName}`);
@@ -184,5 +202,6 @@ if (typeof module !== 'undefined') {
     downloadBundle,
     exportAll,
     exportTool,
+    exportUnattributed,
   };
 }

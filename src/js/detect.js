@@ -5,7 +5,7 @@
 // The browser-side glue (reading localStorage, calling caches.keys() etc.)
 // lives in inspect.js. Keeping detect pure makes it node-testable.
 
-const KNOWN_TOOL_NAMES = ['ep', 'calque', 'dee', 'plan', 'rv', 'gcu-press'];
+const KNOWN_TOOL_NAMES = ['ep', 'calque', 'dee', 'plan', 'rv', 'gcu-press', 'beacon'];
 
 const TOOL_KEY_RE = /^gcu:tool:(.*)$/;
 

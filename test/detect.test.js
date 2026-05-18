@@ -106,6 +106,12 @@ test('inferTools: hyphenated tool name (gcu-press) works', () => {
   assert.equal(tools[0].name, 'gcu-press');
 });
 
+test('inferTools: beacon inferred from cache prefix and SW scope', () => {
+  const tools = inferTools({ cacheNames: ['beacon-shell-v1'], swScopes: ['/beacon/'] }, []);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].name, 'beacon');
+});
+
 test('inferTools: does not infer already-announced tool', () => {
   const tools = inferTools({ idbNames: ['ep'] }, ['ep']);
   assert.equal(tools.length, 0);

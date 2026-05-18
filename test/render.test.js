@@ -4,6 +4,7 @@ const {
   formatBytes,
   decorateTool,
   buildToolDetails,
+  buildUnattributedDetails,
   summaryStats,
   hasUnattributed,
   isPhraseAccepted,
@@ -153,6 +154,40 @@ test('buildToolDetails: SW scope matches via path (not full URL)', () => {
   };
   const d = buildToolDetails(tool, inspectResult);
   assert.equal(d.sws.length, 1);
+});
+
+test('buildUnattributedDetails: cross-references + includes all sessionStorage', () => {
+  const unattributed = {
+    cacheNames: ['stray-cache'],
+    idbNames: ['mystery'],
+    localStorageKeys: ['orphan-key'],
+    swScopes: ['/external/'],
+  };
+  const inspectResult = {
+    caches: [{ name: 'stray-cache', entryUrls: ['https://x/a'] }],
+    idbs: [{ name: 'mystery', version: 1, stores: [{ name: 'stuff', recordCount: 3 }] }],
+    localStorage: [['orphan-key', 'orphan-value'], ['known-tool-key', 'known']],
+    sessionStorage: [['session-a', '1'], ['session-b', '2']],
+    swRegistrations: [{ scope: 'https://gentropic.org/external/', scriptURL: 'x', state: 'activated' }],
+  };
+  const d = buildUnattributedDetails(unattributed, inspectResult);
+  assert.deepEqual(d.caches, [{ name: 'stray-cache', urls: ['https://x/a'] }]);
+  assert.deepEqual(d.idbs[0].name, 'mystery');
+  assert.deepEqual(d.localStorage, [['orphan-key', 'orphan-value']]);
+  assert.deepEqual(d.sessionStorage, [['session-a', '1'], ['session-b', '2']]);
+  assert.equal(d.sws.length, 1);
+});
+
+test('buildUnattributedDetails: empty everything yields empty buckets', () => {
+  const d = buildUnattributedDetails(
+    { cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] },
+    { caches: [], idbs: [], localStorage: [], sessionStorage: [], swRegistrations: [] },
+  );
+  assert.deepEqual(d.caches, []);
+  assert.deepEqual(d.idbs, []);
+  assert.deepEqual(d.localStorage, []);
+  assert.deepEqual(d.sessionStorage, []);
+  assert.deepEqual(d.sws, []);
 });
 
 test('buildToolDetails: missing storage entries quietly skipped', () => {

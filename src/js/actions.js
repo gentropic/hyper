@@ -40,6 +40,19 @@ function planNuke(inspectResult) {
   };
 }
 
+// Includes all of sessionStorage because no tool announces ownership of SS
+// keys — anything in SS is implicitly unattributed.
+function planResetUnattributed(detectResult, inspectResult) {
+  const u = detectResult.unattributed;
+  return {
+    cacheNames: [...u.cacheNames],
+    swScopes: [...u.swScopes],
+    idbNames: [...u.idbNames],
+    localStorageKeys: [...u.localStorageKeys],
+    sessionStorageKeys: inspectResult.sessionStorage.map(([k]) => k),
+  };
+}
+
 function pickToolURL(tool) {
   if (!tool) return null;
   const links = tool.announcement && tool.announcement.links;
@@ -170,6 +183,18 @@ async function refreshAllTools(detectResult) {
   return { results };
 }
 
+async function resetUnattributed(detectResult, inspectResult) {
+  const plan = planResetUnattributed(detectResult, inspectResult);
+  const [c, s, i, l, ss] = await Promise.all([
+    clearCaches(plan.cacheNames),
+    unregisterScopes(plan.swScopes),
+    deleteIdbs(plan.idbNames),
+    Promise.resolve(clearLocalStorageKeys(plan.localStorageKeys)),
+    Promise.resolve(clearSessionStorageKeys(plan.sessionStorageKeys)),
+  ]);
+  return { caches: c, sws: s, idbs: i, localStorage: l, sessionStorage: ss };
+}
+
 async function nukeOrigin(inspectResult) {
   const plan = planNuke(inspectResult);
   const [c, s, i, l, ss] = await Promise.all([
@@ -187,6 +212,7 @@ if (typeof module !== 'undefined') {
     planResetTool,
     planForceRefresh,
     planNuke,
+    planResetUnattributed,
     pickToolURL,
     describePlan,
     scopePath,
@@ -198,6 +224,7 @@ if (typeof module !== 'undefined') {
     resetTool,
     forceRefreshTool,
     refreshAllTools,
+    resetUnattributed,
     nukeOrigin,
   };
 }

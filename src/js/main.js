@@ -42,7 +42,11 @@ async function onActionClick(e) {
     const didMutate = await dispatch(action, tool);
     if (didMutate) await boot();
   } catch (err) {
-    alert(`hyper: action "${action}" failed:\n${err && err.message ? err.message : err}`);
+    await messageDialog({
+      title: `Action "${action}" failed`,
+      body: err && err.message ? err.message : String(err),
+      danger: true,
+    });
   } finally {
     busy = false;
   }
@@ -79,6 +83,22 @@ async function dispatch(action, tool) {
       if (!ok) return false;
       await refreshAllTools(currentState.detectResult);
       return true;
+    }
+    case 'reset-unattributed': {
+      const plan = planResetUnattributed(currentState.detectResult, currentState.inspectResult);
+      const ok = await confirmDialog({
+        title: 'Reset all unattributed storage?',
+        body: `Will delete: ${describePlan(plan)}.`,
+        confirmLabel: 'Reset',
+        danger: true,
+      });
+      if (!ok) return false;
+      await resetUnattributed(currentState.detectResult, currentState.inspectResult);
+      return true;
+    }
+    case 'export-unattributed': {
+      await exportUnattributed(currentState);
+      return false;
     }
     case 'nuke': {
       const plan = planNuke(currentState.inspectResult);
