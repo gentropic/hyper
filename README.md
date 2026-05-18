@@ -43,7 +43,7 @@ Web storage is partitioned by **origin** — `scheme + host + port`. Not by path
 
 Service worker scope is path-based, so hyper at `/hyper/` is **outside** any individual GCU tool's SW scope (`/ep/`, `/calque/`, etc.). It loads via direct network even when a tool's SW is broken, then reaches in to clean things up.
 
-For tools shipped as standalone HTML files (opened from `file://` or hosted on a third-party origin), hyper can also be bundled directly into the tool's artifact at `<tool>/hyper/`.
+For tools hosted on a non-`gentropic.org` origin, `index.html` can be deployed at any path on that same origin and will manage the origin's storage — no code change needed. Standalone `file://` use also works on Firefox (all `file://` URLs share an origin there); Chrome's per-file opaque-origin model makes it more limited. See [SPEC §Deployment](SPEC.md) for the full story.
 
 ---
 

@@ -76,15 +76,20 @@ A SW registered with default scope at `/ep/sw.js` controls only `/ep/*` requests
 
 This is the "always-available escape hatch" property. hyper is designed to load even when *every* GCU tool's SW on the origin is broken.
 
-### Two deployment shapes
+### Deployment is portable
 
-The same code ships in two contexts:
+`index.html` makes no assumption about its origin or path — it inspects whatever origin it's served from. Three shapes are practical:
 
-**Origin-root deployment** — `gentropic.org/hyper/` manages every GCU tool deployed to `gentropic.org/*`. One hyper for the whole hosted stack. This is the primary deployment.
+**Origin-root deployment (primary)** — `gentropic.org/hyper/` manages every GCU tool deployed to `gentropic.org/*`. One hyper for the whole hosted stack.
 
-**Bundled with each tool** — when a user exports an ep `.html` and opens it from `file://`, the origin-root hyper can't reach it (different origin or origin is `null`). For those cases, each GCU tool can optionally bundle a copy at `<tool>/hyper/` that ships in the artifact and works against the local origin. Same code, two distribution targets.
+**Co-hosted with a tool on a third-party origin** — when a GCU tool is hosted somewhere other than `gentropic.org` (e.g., a partner deploys ep at `partner.example.com/embedded-ep/`), the partner can drop `index.html` at any path on that same origin and it will manage that tool's storage. No code change needed; the runtime reads `location.origin` at boot.
 
-The build artifact is the same `index.html` in both cases.
+**Standalone local file (`file://`)** — drop `index.html` anywhere a browser can open it. The behaviour here depends on the browser:
+
+- **Firefox** treats all `file://` URLs as a single shared origin. A standalone copy in `~/Downloads/` *can* inspect storage for any other `file://`-loaded GCU tool — useful for local development.
+- **Chrome / Edge** give each `file://` URL its own opaque origin, so a standalone copy sees nothing. Sharing storage with a `file://` tool on Chrome requires *embedding* hyper inside the tool's HTML (out of scope for this repo — that's the host tool's call).
+
+The build artifact is the same `index.html` in all cases.
 
 ### Single file, no dependencies
 
@@ -328,7 +333,7 @@ The `name` field inside the value must match the suffix of the key (`gcu:tool:ep
 - **Should hyper itself have a service worker?** Probably not for v0.1 — staying SW-free guarantees it always loads via direct network. If we want hyper to work offline later, the SW would need to be very conservative (network-first for hyper's own HTML, no aggressive caching).
 - **Quota recovery on quota-exhausted origin.** If `navigator.storage.estimate()` reports the origin near quota, hyper should highlight it. The fix is just normal cleanup.
 - **Should the export format be importable back into tools?** Yes ideally, but the import side is the tool's responsibility, not hyper's. hyper just emits the bundle in a documented shape.
-- **Visualization of disk usage.** A simple bar chart per tool / per category might be nicer than just text sizes. Worth a small canvas-based draw.
+- **Force-refresh URL in non-prod deployments.** Currently uses `tool.announcement.links.homepage`, the canonical prod URL. When hyper is co-hosted on a third-party origin or running from `file://`, opening the prod URL in a new tab is the wrong action — it doesn't refresh the *local* copy of the tool. Options: skip Force-refresh when origins don't match; add a relative-URL fallback; or let tools announce a relative `openLocal` link alongside `homepage`.
 - **Authentication / sensitivity.** Some users might have sensitive data in IDB. The "show details" toggle could be gated behind a "I understand this shows raw data" warning. Probably fine without for v0.1.
 
 ---
@@ -338,7 +343,7 @@ The `name` field inside the value must match the suffix of the key (`gcu:tool:ep
 Same trajectory shape as ep:
 
 - **v0.1** — inspector + selective clear + export + force-refresh. Single deployed artifact at `gentropic.org/hyper/`. ep adopts the `gcu:tool` announcement convention.
-- **v0.2** — bundle-with-tool deployment. Heuristic detection improvements. Visual storage breakdown.
+- **v0.2** — visual storage breakdown (opt-in, gated behind a Compute button to preserve fast first-paint). `indexedDB.databases()` fallback for browsers that lack it. Documented portable-deployment story (origin-root / third-party-cohost / standalone `file://`).
 - **v0.3** — multi-origin awareness (for users with multiple GCU origins they manage). Persistent diagnostics ("ep brick'd twice this week — file a bug?").
 - **v1.0** — stable JSON export/import contract. Documented for third-party GCU-shaped tools that want to participate.
 
