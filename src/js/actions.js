@@ -21,12 +21,12 @@ function planResetTool(tool) {
   };
 }
 
-function planForceRefresh(tool) {
+function planForceRefresh(tool, currentOrigin) {
   const sk = (tool && tool.storage) || {};
   return {
     cacheNames: sk.cacheNames || [],
     swScopes: sk.swScopes || [],
-    url: pickToolURL(tool),
+    url: pickToolURL(tool, currentOrigin),
   };
 }
 
@@ -53,13 +53,28 @@ function planResetUnattributed(detectResult, inspectResult) {
   };
 }
 
-function pickToolURL(tool) {
+function pickToolURL(tool, currentOrigin) {
   if (!tool) return null;
   const links = tool.announcement && tool.announcement.links;
-  if (links && links.homepage) return links.homepage;
+  const homepage = links && links.homepage;
+  // Use the announced homepage only when it resolves to the current origin —
+  // otherwise we'd open the prod URL when hyper is running locally or
+  // co-hosted on a third-party origin. Falls through to a SW scope (a
+  // relative path) so window.open lands on the local copy of the tool.
+  if (homepage && (!currentOrigin || isSameOrigin(homepage, currentOrigin))) {
+    return homepage;
+  }
   const scopes = tool.storage && tool.storage.swScopes;
   if (scopes && scopes[0]) return scopes[0];
   return null;
+}
+
+function isSameOrigin(url, currentOrigin) {
+  try {
+    return new URL(url, currentOrigin + '/').origin === currentOrigin;
+  } catch {
+    return false;
+  }
 }
 
 function describePlan(plan) {
@@ -160,8 +175,8 @@ async function resetTool(tool) {
   return { caches: c, sws: s, idbs: i, localStorage: l };
 }
 
-async function forceRefreshTool(tool, openURL) {
-  const plan = planForceRefresh(tool);
+async function forceRefreshTool(tool, openURL, currentOrigin) {
+  const plan = planForceRefresh(tool, currentOrigin);
   const [s, c] = await Promise.all([
     unregisterScopes(plan.swScopes),
     clearCaches(plan.cacheNames),

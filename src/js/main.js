@@ -79,7 +79,7 @@ async function dispatch(action, tool) {
     }
     case 'refresh-tool': {
       if (!tool) return false;
-      await forceRefreshTool(tool, (url) => window.open(url, '_blank'));
+      await forceRefreshTool(tool, (url) => window.open(url, '_blank'), location.origin);
       return true;
     }
     case 'refresh-all': {

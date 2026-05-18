@@ -333,7 +333,7 @@ The `name` field inside the value must match the suffix of the key (`gcu:tool:ep
 - **Should hyper itself have a service worker?** Probably not for v0.1 — staying SW-free guarantees it always loads via direct network. If we want hyper to work offline later, the SW would need to be very conservative (network-first for hyper's own HTML, no aggressive caching).
 - **Quota recovery on quota-exhausted origin.** If `navigator.storage.estimate()` reports the origin near quota, hyper should highlight it. The fix is just normal cleanup.
 - **Should the export format be importable back into tools?** Yes ideally, but the import side is the tool's responsibility, not hyper's. hyper just emits the bundle in a documented shape.
-- **Force-refresh URL in non-prod deployments.** Currently uses `tool.announcement.links.homepage`, the canonical prod URL. When hyper is co-hosted on a third-party origin or running from `file://`, opening the prod URL in a new tab is the wrong action — it doesn't refresh the *local* copy of the tool. Options: skip Force-refresh when origins don't match; add a relative-URL fallback; or let tools announce a relative `openLocal` link alongside `homepage`.
+- ~~**Force-refresh URL in non-prod deployments.**~~ Resolved in v0.2: `pickToolURL` now checks `announcement.links.homepage` against the current origin and falls through to the first SW scope (a relative path) when they don't match. So third-party-cohosted hyper opens the *local* copy of the tool, not the prod URL.
 - **Authentication / sensitivity.** Some users might have sensitive data in IDB. The "show details" toggle could be gated behind a "I understand this shows raw data" warning. Probably fine without for v0.1.
 
 ---
@@ -342,9 +342,9 @@ The `name` field inside the value must match the suffix of the key (`gcu:tool:ep
 
 Same trajectory shape as ep:
 
-- **v0.1** — inspector + selective clear + export + force-refresh. Single deployed artifact at `gentropic.org/hyper/`. ep adopts the `gcu:tool` announcement convention.
-- **v0.2** — visual storage breakdown (opt-in, gated behind a Compute button to preserve fast first-paint). `indexedDB.databases()` fallback for browsers that lack it. Documented portable-deployment story (origin-root / third-party-cohost / standalone `file://`).
-- **v0.3** — multi-origin awareness (for users with multiple GCU origins they manage). Persistent diagnostics ("ep brick'd twice this week — file a bug?").
+- **v0.1 (shipped)** — inspector + selective clear + export + force-refresh. Single deployed artifact at `gentropic.org/hyper/`. ep adopts the `gcu:tool` announcement convention.
+- **v0.2 (shipped)** — visual storage breakdown (opt-in, gated behind a Compute button to preserve fast first-paint). `indexedDB.databases()` fallback for browsers that lack it. Documented portable-deployment story (origin-root / third-party-cohost / standalone `file://`).
+- **v0.3** — persistent diagnostics ("ep brick'd twice this week — file a bug?"). (Multi-origin awareness was on the v0.3 list originally but the cross-origin browser model makes it expensive; deferred until there's a concrete user.)
 - **v1.0** — stable JSON export/import contract. Documented for third-party GCU-shaped tools that want to participate.
 
 Calculator-scale tool. Probably plateaus near v0.5 and stays there for a long time.

@@ -112,6 +112,46 @@ test('pickToolURL: null when nothing usable', () => {
   assert.equal(pickToolURL(null), null);
 });
 
+test('pickToolURL: with matching currentOrigin → homepage returned', () => {
+  const url = pickToolURL({
+    announcement: { links: { homepage: 'https://gentropic.org/ep/' } },
+    storage: { swScopes: ['/ep/'] },
+  }, 'https://gentropic.org');
+  assert.equal(url, 'https://gentropic.org/ep/');
+});
+
+test('pickToolURL: with non-matching currentOrigin → falls through to SW scope', () => {
+  const url = pickToolURL({
+    announcement: { links: { homepage: 'https://gentropic.org/ep/' } },
+    storage: { swScopes: ['/ep/'] },
+  }, 'https://partner.example.com');
+  assert.equal(url, '/ep/');
+});
+
+test('pickToolURL: non-matching origin + no SW scope → null', () => {
+  const url = pickToolURL({
+    announcement: { links: { homepage: 'https://gentropic.org/ep/' } },
+    storage: {},
+  }, 'https://partner.example.com');
+  assert.equal(url, null);
+});
+
+test('pickToolURL: file:// origin treats prod homepage as non-matching', () => {
+  const url = pickToolURL({
+    announcement: { links: { homepage: 'https://gentropic.org/ep/' } },
+    storage: { swScopes: ['/ep/'] },
+  }, 'null');
+  assert.equal(url, '/ep/');
+});
+
+test('pickToolURL: no currentOrigin arg → existing behavior (homepage always)', () => {
+  const url = pickToolURL({
+    announcement: { links: { homepage: 'https://gentropic.org/ep/' } },
+    storage: { swScopes: ['/ep/'] },
+  });
+  assert.equal(url, 'https://gentropic.org/ep/');
+});
+
 test('scopePath: full URL → pathname; bare path unchanged', () => {
   assert.equal(scopePath('https://gentropic.org/ep/'), '/ep/');
   assert.equal(scopePath('/ep/'), '/ep/');
