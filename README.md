@@ -6,7 +6,7 @@ Live (planned) at **[gentropic.org/hyper](https://gentropic.org/hyper)**.
 
 Part of the [GCU](https://github.com/gentropic) stack of single-file working tools.
 
-**Status:** pre-0.1. Spec only. See [`SPEC.md`](SPEC.md) for the design contract.
+**Status:** v0.3 shipped. Single ~75 KB `index.html`, zero dependencies, 139 tests. See [`SPEC.md`](SPEC.md) for the design contract.
 
 ---
 
@@ -22,11 +22,12 @@ It's the "press this when something is wrong" tool. Calculator-scale, single-fil
 
 ## What it does
 
-- **Inspect** — list all caches, IDB databases, localStorage entries, and SW registrations on the origin. Group by detected GCU tool.
-- **Export** — bundle user data as a downloadable JSON file. Cache Storage entries are skipped by default (regenerable from network); IDB and localStorage are included.
-- **Selectively clear** — clear just caches, just SWs, just IDB, or just LS. Per-tool or origin-wide. Each action confirms before destroying.
-- **Force-refresh** — the common case: unregister a tool's SWs + clear its caches + open it fresh. Preserves user data.
-- **Nuke** — last resort. Wipes everything for the origin. Confirms loudly.
+- **Inspect** — list all caches, IDB databases, localStorage entries, and SW registrations on the origin. Group by detected GCU tool. Per-tool storage bar with opt-in cache byte measurement (kept off the load path so hyper still paints fast when something is broken).
+- **Export** — bundle user data as a downloadable JSON file. Cache Storage entries are skipped by default (regenerable from network); IDB, localStorage, and sessionStorage are included.
+- **Selectively clear** — clear just caches, just SWs, just IDB, or just LS. Per-tool, per-unattributed-bucket, or origin-wide. Each action confirms before destroying.
+- **Force-refresh** — the common case: unregister a tool's SWs + clear its caches + open it fresh. Preserves user data. Picks a local URL when running outside the tool's prod origin.
+- **Diagnostics** — show a per-tool timeline of events tools have logged via the `gcu:log:<name>` convention (boot, error, etc.). Lets you see what's been happening before deciding what to clear.
+- **Nuke** — last resort. Wipes everything for the origin. Confirms via a phrase prompt (type "delete").
 
 What it doesn't do: launch tools, manage settings, do anything automatically without user consent.
 
@@ -36,7 +37,7 @@ What it doesn't do: launch tools, manage settings, do anything automatically wit
 
 Web storage is partitioned by **origin** — `scheme + host + port`. Not by path. So everything under `https://gentropic.org/*` shares one storage namespace, including caches/IDB/localStorage/SW registrations. A page at `gentropic.org/hyper/` can enumerate and manage all of it via standard web APIs:
 
-- `indexedDB.databases()`
+- `indexedDB.databases()` (with name-probe fallback for older Safari / WebViews that lack it)
 - `caches.keys()` + `cache.keys()` + `cache.match()`
 - `navigator.serviceWorker.getRegistrations()`
 - `localStorage` / `sessionStorage`
@@ -66,28 +67,32 @@ localStorage.setItem('gcu:tool:ep', JSON.stringify({
 
 hyper reads all `gcu:tool:*` keys to identify which storage belongs to which tool. Tools that don't announce themselves still appear, attributed by heuristic where possible and as "unknown" otherwise.
 
-See SPEC.md for the full announcement contract.
+Tools can also opt into the sibling `gcu:log:<name>` convention — a small bounded ring of diagnostic events (boot, error, etc.) that hyper surfaces in each tool's show-details section. Strict caps (500 bytes per entry, 50 entries per ring) keep it from filling localStorage. See SPEC.md for both contracts.
 
 ---
 
-## Try it locally (when built)
+## Try it locally
 
-No build step required to run — just open `index.html`:
+The built `index.html` is committed. No install step:
 
 ```sh
 git clone https://github.com/gentropic/hyper
 cd hyper
-# open index.html in your browser
+# open index.html directly, or serve the directory (recommended for SW APIs):
+python -m http.server 8000
+# then visit http://localhost:8000/
 ```
 
-### Build from source (when there is source)
+Some browser APIs (`navigator.serviceWorker`, `navigator.storage.estimate`) only work fully over `http://localhost` or HTTPS, not `file://` — so for a real test, serve the directory.
+
+### Build from source
 
 ```sh
-node build.js
-node --test
+npm run build   # or: node build.js
+npm test        # or: node --test
 ```
 
-Zero npm dependencies. Single HTML file output.
+Zero npm dependencies. The build concatenates `src/template.html` + `src/style.css` + `src/js/*.js` into a single `index.html`.
 
 ---
 
