@@ -2,11 +2,11 @@
 
 A browser-native inspector and fixer for GCU PWAs. When a tool's service worker has cached stale bytes, when IndexedDB has filled with junk, when a PWA bricks itself and won't recover, `hyper` is the always-available escape hatch.
 
-Live (planned) at **[gentropic.org/hyper](https://gentropic.org/hyper)**.
+Live at **[gentropic.org/hyper](https://gentropic.org/hyper)**.
 
 Part of the [GCU](https://github.com/gentropic) stack of single-file working tools.
 
-**Status:** v0.3 shipped. Single ~75 KB `index.html`, zero dependencies, 139 tests. See [`SPEC.md`](SPEC.md) for the design contract.
+**Status:** v0.4 shipped. Single ~87 KB `index.html`, zero dependencies, 158 tests. See [`SPEC.md`](SPEC.md) for the design contract.
 
 ---
 
@@ -23,8 +23,9 @@ It's the "press this when something is wrong" tool. Calculator-scale, single-fil
 ## What it does
 
 - **Inspect** — list all caches, IDB databases, localStorage entries, and SW registrations on the origin. Group by detected GCU tool. Per-tool storage bar with opt-in cache byte measurement (kept off the load path so hyper still paints fast when something is broken).
+- **Containers** — surface runtime-published images (e.g. dd containers) via the `gcu:img:<id>` convention. Per-image Reset is record-level: cleans only that image's records without touching siblings on the same runtime's IDB.
 - **Export** — bundle user data as a downloadable JSON file. Cache Storage entries are skipped by default (regenerable from network); IDB, localStorage, and sessionStorage are included.
-- **Selectively clear** — clear just caches, just SWs, just IDB, or just LS. Per-tool, per-unattributed-bucket, or origin-wide. Each action confirms before destroying.
+- **Selectively clear** — clear just caches, just SWs, just IDB, or just LS. Per-tool, per-image, per-unattributed-bucket, or origin-wide. Each action confirms before destroying.
 - **Force-refresh** — the common case: unregister a tool's SWs + clear its caches + open it fresh. Preserves user data. Picks a local URL when running outside the tool's prod origin.
 - **Diagnostics** — show a per-tool timeline of events tools have logged via the `gcu:log:<name>` convention (boot, error, etc.). Lets you see what's been happening before deciding what to clear.
 - **Nuke** — last resort. Wipes everything for the origin. Confirms via a phrase prompt (type "delete").
@@ -67,7 +68,9 @@ localStorage.setItem('gcu:tool:ep', JSON.stringify({
 
 hyper reads all `gcu:tool:*` keys to identify which storage belongs to which tool. Tools that don't announce themselves still appear, attributed by heuristic where possible and as "unknown" otherwise.
 
-Tools can also opt into the sibling `gcu:log:<name>` convention — a small bounded ring of diagnostic events (boot, error, etc.) that hyper surfaces in each tool's show-details section. Strict caps (500 bytes per entry, 50 entries per ring) keep it from filling localStorage. See SPEC.md for both contracts.
+Tools can also opt into the sibling `gcu:log:<name>` convention — a small bounded ring of diagnostic events (boot, error, etc.) that hyper surfaces in each tool's show-details section. Strict caps (500 bytes per entry, 50 entries per ring) keep it from filling localStorage.
+
+A third namespace, `gcu:img:<id>`, handles *containers* — runtime-published images like dd's PWA containers. The marker carries cleanup metadata (`storageKeys` block) so hyper can delete a single image's records without touching siblings on the same runtime's IDB. See SPEC.md for all three contracts.
 
 ---
 
