@@ -17,9 +17,12 @@ function formatBytes(bytes) {
 
 // Build the "show details" payload for a tool — cross-references the tool's
 // claimed storage names against the rich inspect data, returning the per-cache
-// URL list, per-IDB stores, LS key/value pairs, and SW details.
-function buildToolDetails(tool, inspectResult) {
-  return crossReferenceStorage(tool.storage, inspectResult);
+// URL list, per-IDB stores, LS key/value pairs, SW details, and (if logs are
+// available) the parsed gcu:log entries for this tool.
+function buildToolDetails(tool, inspectResult, logs) {
+  const base = crossReferenceStorage(tool.storage, inspectResult);
+  base.logEntries = (logs && logs.get && logs.get(tool.name) && logs.get(tool.name).entries) || [];
+  return base;
 }
 
 // Same shape as buildToolDetails plus the full sessionStorage bucket (no
@@ -193,9 +196,8 @@ function renderApp(state, root) {
       state.detectResult.unattributed, state.inspectResult, decoratedUnattributed, maxBytes,
     ));
   }
-  if (state.detectResult.malformed.length) {
-    root.appendChild(renderMalformed(state.detectResult.malformed));
-  }
+  const issues = renderIssues(state.detectResult.malformed, state.logWarnings);
+  if (issues) root.appendChild(issues);
   root.appendChild(renderGlobalActions());
 }
 
@@ -230,12 +232,12 @@ function renderToolList(state, decoratedTools, maxBytes) {
     return list;
   }
   for (const { tool, d } of decoratedTools) {
-    list.appendChild(renderToolRow(d, tool, state.inspectResult, maxBytes));
+    list.appendChild(renderToolRow(d, tool, state.inspectResult, maxBytes, state.logs));
   }
   return list;
 }
 
-function renderToolRow(t, tool, inspectResult, maxBytes) {
+function renderToolRow(t, tool, inspectResult, maxBytes, logs) {
   const row = el('article', { class: `hyper-tool hyper-tool--${t.source}`, data: { tool: t.name } });
   const head = el('div', { class: 'hyper-tool__head' });
   head.appendChild(el('span', { class: 'hyper-tool__name', text: t.displayName }));
@@ -259,7 +261,7 @@ function renderToolRow(t, tool, inspectResult, maxBytes) {
   actions.appendChild(actionButton('Reset', 'reset-tool', t.name, 'danger'));
   row.appendChild(actions);
 
-  row.appendChild(renderToolDetails(buildToolDetails(tool, inspectResult)));
+  row.appendChild(renderToolDetails(buildToolDetails(tool, inspectResult, logs)));
   return row;
 }
 
@@ -319,7 +321,8 @@ function renderToolDetails(details) {
   wrap.appendChild(el('summary', { text: 'Show details' }));
 
   const ss = details.sessionStorage || [];
-  if (details.caches.length === 0 && details.idbs.length === 0 && details.localStorage.length === 0 && details.sws.length === 0 && ss.length === 0) {
+  const logs = details.logEntries || [];
+  if (details.caches.length === 0 && details.idbs.length === 0 && details.localStorage.length === 0 && details.sws.length === 0 && ss.length === 0 && logs.length === 0) {
     wrap.appendChild(el('p', { class: 'muted', text: 'No storage to inspect.' }));
     return wrap;
   }
@@ -363,7 +366,53 @@ function renderToolDetails(details) {
     section.appendChild(dl);
     wrap.appendChild(section);
   }
+  if (logs.length) {
+    wrap.appendChild(renderLogSection(logs));
+  }
   return wrap;
+}
+
+function renderLogSection(entries) {
+  const section = el('div', { class: 'hyper-detail-section' });
+  section.appendChild(el('h3', { text: `Recent events (${entries.length})` }));
+  const list = el('ol', { class: 'hyper-log-list' });
+  const now = Date.now();
+  // Newest first
+  for (const e of [...entries].reverse()) {
+    const item = el('li', { class: 'hyper-log__entry' });
+    item.appendChild(el('time', {
+      class: 'hyper-log__t',
+      text: formatLogTime(e.t, now),
+      attrs: { datetime: new Date(e.t).toISOString(), title: new Date(e.t).toISOString() },
+    }));
+    item.appendChild(el('span', { class: `hyper-log__type hyper-log__type--${cssToken(e.type)}`, text: e.type }));
+    const msg = formatLogPayload(e);
+    if (msg) item.appendChild(el('span', { class: 'hyper-log__msg', text: msg }));
+    list.appendChild(item);
+  }
+  section.appendChild(list);
+  return section;
+}
+
+// Pure: format a log entry's t (ms since epoch) relative to now.
+function formatLogTime(ms, now) {
+  const diff = (now != null ? now : Date.now()) - ms;
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
+  if (diff < 7 * 86_400_000) return `${Math.round(diff / 86_400_000)}d ago`;
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+// Pure: render the non-t/type fields of a log entry as "k=v" pairs.
+function formatLogPayload(entry) {
+  const fields = Object.keys(entry).filter((k) => k !== 't' && k !== 'type');
+  if (!fields.length) return '';
+  return fields.map((k) => `${k}=${typeof entry[k] === 'string' ? entry[k] : JSON.stringify(entry[k])}`).join(' · ');
+}
+
+function cssToken(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 }
 
 function renderUnattributed(unattributed, inspectResult, decoratedUnattributed, maxBytes) {
@@ -394,13 +443,15 @@ function renderUnattributed(unattributed, inspectResult, decoratedUnattributed, 
   return section;
 }
 
-function renderMalformed(malformed) {
+function renderIssues(malformed, logWarnings) {
+  const all = [...(malformed || []), ...(logWarnings || [])];
+  if (all.length === 0) return null;
   const section = el('section', { class: 'hyper-malformed' });
-  section.appendChild(el('h2', { text: 'Malformed announcements' }));
+  section.appendChild(el('h2', { text: 'Issues' }));
   const wrap = el('details');
-  wrap.appendChild(el('summary', { text: `${malformed.length} malformed entr${malformed.length === 1 ? 'y' : 'ies'}` }));
+  wrap.appendChild(el('summary', { text: `${all.length} issue${all.length === 1 ? '' : 's'} detected` }));
   const ul = el('ul');
-  for (const m of malformed) {
+  for (const m of all) {
     ul.appendChild(el('li', { text: `${m.key}: ${m.reason}` }));
   }
   wrap.appendChild(ul);
@@ -542,6 +593,8 @@ function confirmWithPhrase({ title, body, phrase, confirmLabel = 'Confirm', canc
 if (typeof module !== 'undefined') {
   module.exports = {
     formatBytes,
+    formatLogTime,
+    formatLogPayload,
     decorateTool,
     decorateUnattributed,
     buildBarSegments,

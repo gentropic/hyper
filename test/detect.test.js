@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   parseAnnouncements,
+  parseLogs,
   inferTools,
   attribute,
   detectTools,
@@ -256,6 +257,116 @@ test('gatherIdbHints: ignores announcements without storageKeys.idb', () => {
   ];
   const hints = gatherIdbHints(ls);
   assert.equal(hints.length, KNOWN_TOOL_NAMES.length);
+});
+
+// --- parseLogs ---------------------------------------------------------
+
+test('parseLogs: empty input → empty result', () => {
+  const r = parseLogs([]);
+  assert.equal(r.logs.size, 0);
+  assert.equal(r.warnings.length, 0);
+});
+
+test('parseLogs: valid single ring parsed and keyed by tool name', () => {
+  const value = JSON.stringify({
+    schema: 1,
+    entries: [
+      { t: 1000, type: 'boot', v: '0.2.3' },
+      { t: 2000, type: 'error', msg: 'fetch failed' },
+    ],
+  });
+  const r = parseLogs([['gcu:log:ep', value]]);
+  assert.equal(r.warnings.length, 0);
+  assert.equal(r.logs.size, 1);
+  const log = r.logs.get('ep');
+  assert.equal(log.schema, 1);
+  assert.equal(log.entries.length, 2);
+  assert.equal(log.entries[0].type, 'boot');
+});
+
+test('parseLogs: ignores non-gcu:log keys', () => {
+  const r = parseLogs([
+    ['gcu:tool:ep', '{}'],
+    ['ep:current', 'x'],
+    ['gcu:log:ep', JSON.stringify({ entries: [] })],
+  ]);
+  assert.equal(r.logs.size, 1);
+  assert.ok(r.logs.has('ep'));
+});
+
+test('parseLogs: empty name suffix → warning', () => {
+  const r = parseLogs([['gcu:log:', JSON.stringify({ entries: [] })]]);
+  assert.equal(r.logs.size, 0);
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0].reason, /empty tool name/);
+});
+
+test('parseLogs: invalid JSON → warning, no log entry', () => {
+  const r = parseLogs([['gcu:log:ep', '{not json']]);
+  assert.equal(r.logs.size, 0);
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0].reason, /invalid JSON/);
+});
+
+test('parseLogs: non-object value → warning', () => {
+  const r = parseLogs([
+    ['gcu:log:a', JSON.stringify(null)],
+    ['gcu:log:b', JSON.stringify(['array'])],
+  ]);
+  assert.equal(r.logs.size, 0);
+  assert.equal(r.warnings.length, 2);
+});
+
+test('parseLogs: missing entries array → warning', () => {
+  const r = parseLogs([['gcu:log:ep', JSON.stringify({ schema: 1 })]]);
+  assert.equal(r.logs.size, 0);
+  assert.match(r.warnings[0].reason, /missing entries/);
+});
+
+test('parseLogs: invalid entry shapes silently filtered', () => {
+  const value = JSON.stringify({
+    entries: [
+      { t: 1000, type: 'boot' },           // valid
+      { type: 'noTimestamp' },             // missing t
+      { t: 2000 },                         // missing type
+      { t: 'notANumber', type: 'boot' },   // wrong t type
+      null,                                // not an object
+      'string',                            // not an object
+      { t: 3000, type: 'error', msg: 'real error' }, // valid
+    ],
+  });
+  const r = parseLogs([['gcu:log:ep', value]]);
+  assert.equal(r.warnings.length, 0);
+  assert.equal(r.logs.get('ep').entries.length, 2);
+});
+
+test('parseLogs: oversized ring (>50 KB) → warning but still parses', () => {
+  const bigMsg = 'x'.repeat(30 * 1024); // 30 KB string → 60 KB UTF-16
+  const value = JSON.stringify({ entries: [{ t: 1, type: 'boot', extra: bigMsg }] });
+  const r = parseLogs([['gcu:log:ep', value]]);
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0].reason, /KB on disk/);
+  // Still parsed despite warning
+  assert.equal(r.logs.get('ep').entries.length, 1);
+});
+
+test('parseLogs: schema field defaults to 1 when missing', () => {
+  const r = parseLogs([['gcu:log:ep', JSON.stringify({ entries: [] })]]);
+  assert.equal(r.logs.get('ep').schema, 1);
+});
+
+test('detectTools: gcu:log:* keys never leak into unattributed', () => {
+  const lsEntries = [
+    ['gcu:tool:ep', JSON.stringify({ name: 'ep' })],
+    ['gcu:log:ep', JSON.stringify({ entries: [] })],
+  ];
+  const observed = {
+    cacheNames: [], idbNames: [],
+    localStorageKeys: ['gcu:tool:ep', 'gcu:log:ep'],
+    swScopes: [],
+  };
+  const { unattributed } = detectTools(lsEntries, observed);
+  assert.deepEqual(unattributed.localStorageKeys, []);
 });
 
 test('detectTools: announcement wins over heuristic for the same tool', () => {

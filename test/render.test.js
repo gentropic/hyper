@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   formatBytes,
+  formatLogTime,
+  formatLogPayload,
   decorateTool,
   decorateUnattributed,
   buildBarSegments,
@@ -332,6 +334,75 @@ test('buildUnattributedDetails: empty everything yields empty buckets', () => {
   assert.deepEqual(d.localStorage, []);
   assert.deepEqual(d.sessionStorage, []);
   assert.deepEqual(d.sws, []);
+});
+
+test('formatLogTime: "just now" for <60s old', () => {
+  assert.equal(formatLogTime(1_000_000, 1_000_500), 'just now');
+});
+
+test('formatLogTime: minutes for <1h old', () => {
+  assert.equal(formatLogTime(1_000_000, 1_000_000 + 5 * 60_000), '5m ago');
+});
+
+test('formatLogTime: hours for <1d old', () => {
+  assert.equal(formatLogTime(1_000_000, 1_000_000 + 3 * 3_600_000), '3h ago');
+});
+
+test('formatLogTime: days for <1w old', () => {
+  assert.equal(formatLogTime(1_000_000, 1_000_000 + 4 * 86_400_000), '4d ago');
+});
+
+test('formatLogTime: ISO date for older events', () => {
+  const ms = Date.parse('2026-01-15T12:00:00Z');
+  const now = ms + 30 * 86_400_000;
+  assert.equal(formatLogTime(ms, now), '2026-01-15');
+});
+
+test('formatLogPayload: empty when entry has only t and type', () => {
+  assert.equal(formatLogPayload({ t: 1, type: 'boot' }), '');
+});
+
+test('formatLogPayload: renders extra fields as k=v separated by ·', () => {
+  const s = formatLogPayload({ t: 1, type: 'boot', v: '0.2.3', uptime: 42 });
+  assert.equal(s, 'v=0.2.3 · uptime=42');
+});
+
+test('formatLogPayload: JSON-stringifies non-string values', () => {
+  const s = formatLogPayload({ t: 1, type: 'x', flags: ['a', 'b'] });
+  assert.match(s, /flags=\["a","b"\]/);
+});
+
+test('buildToolDetails: attaches log entries when logs Map provided', () => {
+  const tool = {
+    name: 'ep',
+    storage: { cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const inspectResult = { caches: [], idbs: [], localStorage: [], swRegistrations: [] };
+  const logs = new Map([['ep', { schema: 1, entries: [{ t: 1, type: 'boot' }] }]]);
+  const d = buildToolDetails(tool, inspectResult, logs);
+  assert.equal(d.logEntries.length, 1);
+  assert.equal(d.logEntries[0].type, 'boot');
+});
+
+test('buildToolDetails: no logs Map → empty logEntries', () => {
+  const tool = {
+    name: 'ep',
+    storage: { cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const inspectResult = { caches: [], idbs: [], localStorage: [], swRegistrations: [] };
+  const d = buildToolDetails(tool, inspectResult);
+  assert.deepEqual(d.logEntries, []);
+});
+
+test('buildToolDetails: tool with no matching log → empty logEntries', () => {
+  const tool = {
+    name: 'beacon',
+    storage: { cacheNames: [], idbNames: [], localStorageKeys: [], swScopes: [] },
+  };
+  const inspectResult = { caches: [], idbs: [], localStorage: [], swRegistrations: [] };
+  const logs = new Map([['ep', { schema: 1, entries: [{ t: 1, type: 'boot' }] }]]);
+  const d = buildToolDetails(tool, inspectResult, logs);
+  assert.deepEqual(d.logEntries, []);
 });
 
 test('buildToolDetails: missing storage entries quietly skipped', () => {

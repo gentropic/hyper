@@ -432,3 +432,43 @@ h2 {
   color: var(--sw-text);
   word-break: break-all;
 }
+
+/* --- gcu:log timeline --- */
+
+.hyper-log-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+.hyper-log__entry {
+  display: grid;
+  grid-template-columns: 5rem 6rem 1fr;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+  align-items: baseline;
+}
+.hyper-log__t {
+  color: var(--sw-text-soft);
+  white-space: nowrap;
+}
+.hyper-log__type {
+  color: var(--sw-text-mid);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+}
+/* Map known event types to Switchboard accent semantics:
+ * teal=info (boot), red=fault (error), amber=caution (upgrade) */
+.hyper-log__type--boot    { color: var(--sw-teal); }
+.hyper-log__type--error   { color: var(--sw-red); }
+.hyper-log__type--upgrade { color: var(--sw-amber); }
+.hyper-log__type--reset   { color: var(--sw-indigo); }
+
+.hyper-log__msg {
+  color: var(--sw-text);
+  word-break: break-word;
+}

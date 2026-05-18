@@ -328,6 +328,75 @@ The `name` field inside the value must match the suffix of the key (`gcu:tool:ep
 
 ---
 
+## The `gcu:log` diagnostic convention
+
+A lightweight complement to `gcu:tool`: tools that adopt it write a small bounded ring of diagnostic events to localStorage, which hyper surfaces in each tool's show-details section. Purely opt-in; tools that don't write logs simply have no log timeline in hyper.
+
+**Where it lives:** `localStorage["gcu:log:<name>"]` — one ring per tool, keyed by the tool's short name. hyper enumerates all keys matching `gcu:log:*` the same way it scans `gcu:tool:*`.
+
+**Shape:**
+
+```json
+{
+  "schema": 1,
+  "entries": [
+    { "t": 1715792345000, "type": "boot", "v": "0.2.3" },
+    { "t": 1715920000000, "type": "error", "msg": "SW fetch failed" }
+  ]
+}
+```
+
+Each entry needs at minimum `t` (number, milliseconds since epoch — `Date.now()`) and `type` (short string like `boot`, `error`, `upgrade`, `reset`). Other fields are free-form — tools include whatever's useful, subject to the size caps below.
+
+**Strict caps (load-bearing):**
+
+- **Per entry:** 500 bytes max (after `JSON.stringify`). Forces tools to keep `msg` tight — no stack traces, no payloads.
+- **Per ring:** 50 entries max. Append-and-trim: oldest entries fall off the front.
+- **Per tool total:** ~25 KB worst case. With 20 tools, that's 500 KB — well under any browser's localStorage budget.
+
+If a tool writes a ring that exceeds 50 KB on disk, hyper surfaces it as a warning ("ep log is 73 KB — should be ≤25 KB; tool may have a logging bug"). hyper does not trim other tools' rings — that's the tool's job.
+
+**What NOT to log:**
+
+- User content (program text, sheet data, document body — anything the user authored)
+- PII (names, emails, IDs)
+- Auth tokens, keys, anything secret
+- Large structured data — if you want to record a payload, log a summary
+
+Logs live on disk and end up in hyper's JSON exports. Treat them like a public bug-report breadcrumb, not a debug trace.
+
+**Helper snippet for tools:**
+
+```js
+function gcuLog(name, type, data = {}) {
+  const key = `gcu:log:${name}`;
+  let entries = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || '{"entries":[]}');
+    entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  } catch {}
+  const entry = { t: Date.now(), type, ...data };
+  if (JSON.stringify(entry).length > 500) return; // refuse oversize
+  entries.push(entry);
+  if (entries.length > 50) entries = entries.slice(-50);
+  localStorage.setItem(key, JSON.stringify({ schema: 1, entries }));
+}
+```
+
+Tools typically call `gcuLog('ep', 'boot', { v: '0.2.3' })` once per boot, plus on caught errors. That's it.
+
+**Why localStorage (not IndexedDB):** sync, bounded, easy to read. The storage budget is tighter than IDB but the writes are simpler and the read path stays trivial for hyper. Tools that need richer telemetry can do their own thing; `gcu:log` is the shared diagnostic minimum.
+
+**Survival across hyper actions:**
+
+| Action          | Log preserved? |
+|-----------------|----------------|
+| Force refresh   | yes (logs are hyper metadata, not tool data) |
+| Reset this tool | yes (the breadcrumb is the point) |
+| Nuke everything | no (everything goes) |
+
+---
+
 ## Open questions
 
 - **Should hyper itself have a service worker?** Probably not for v0.1 — staying SW-free guarantees it always loads via direct network. If we want hyper to work offline later, the SW would need to be very conservative (network-first for hyper's own HTML, no aggressive caching).
@@ -344,7 +413,7 @@ Same trajectory shape as ep:
 
 - **v0.1 (shipped)** — inspector + selective clear + export + force-refresh. Single deployed artifact at `gentropic.org/hyper/`. ep adopts the `gcu:tool` announcement convention.
 - **v0.2 (shipped)** — visual storage breakdown (opt-in, gated behind a Compute button to preserve fast first-paint). `indexedDB.databases()` fallback for browsers that lack it. Documented portable-deployment story (origin-root / third-party-cohost / standalone `file://`).
-- **v0.3** — persistent diagnostics ("ep brick'd twice this week — file a bug?"). (Multi-origin awareness was on the v0.3 list originally but the cross-origin browser model makes it expensive; deferred until there's a concrete user.)
+- **v0.3 (shipped)** — persistent diagnostics via the `gcu:log:<name>` localStorage convention: tools write small bounded rings, hyper surfaces them per-tool in show-details. Pattern detection ("ep brick'd 3× this week") deferred to v0.4. (Multi-origin awareness was on the original v0.3 list but the cross-origin browser model makes it expensive; deferred until there's a concrete user.)
 - **v1.0** — stable JSON export/import contract. Documented for third-party GCU-shaped tools that want to participate.
 
 Calculator-scale tool. Probably plateaus near v0.5 and stays there for a long time.

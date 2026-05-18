@@ -31,10 +31,13 @@ async function loadState() {
   const idbHints = gatherIdbHints(lsForHints);
   const inspectResult = await inspectOrigin({ idbHints });
   const detectResult = detectTools(inspectResult.localStorage, toObserved(inspectResult));
+  const { logs, warnings: logWarnings } = parseLogs(inspectResult.localStorage);
   return {
     origin: typeof location !== 'undefined' ? location.origin : '',
     inspectResult,
     detectResult,
+    logs,
+    logWarnings,
   };
 }
 
