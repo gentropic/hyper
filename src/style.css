@@ -271,6 +271,84 @@ h2 {
   background: transparent;
 }
 
+/* --- Containers (gcu:img) --- */
+
+.hyper-images { margin-top: 1.5rem; }
+.hyper-images__runtime {
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 1rem 0 0.5rem;
+}
+
+.hyper-image {
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius-lg);
+  background: var(--sw-bg-raised);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.hyper-image__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+.hyper-image__name {
+  font-family: var(--sw-sans);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--sw-text);
+}
+.hyper-image__runtime {
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--sw-text-soft);
+}
+
+/* Isolation badge — indigo=selected for trusted (default, lower stakes),
+ * amber=caution for strict (the sandboxed mode has constraints the user
+ * should be aware of when reading the row). */
+.hyper-image__iso {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--sw-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--sw-radius);
+}
+.hyper-image__iso::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.hyper-image__iso--trusted { background: var(--sw-indigo-soft); color: var(--sw-indigo); }
+.hyper-image__iso--strict  { background: var(--sw-amber-soft);  color: var(--sw-amber);  }
+
+.hyper-image__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.25rem;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--sw-text-soft);
+  margin-bottom: 0.6rem;
+}
+.hyper-image__scope { color: var(--sw-text-mid); }
+
 /* --- Unattributed / Malformed --- */
 
 .hyper-unattributed,

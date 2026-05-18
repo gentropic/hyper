@@ -64,6 +64,24 @@ function normalizeScope(scope) {
   try { return new URL(scope).pathname; } catch { return scope; }
 }
 
+// Pure: shape an image marker for display. createdRel is a relative-time
+// string derived against `now` (injectable for tests).
+function decorateImage(image, now) {
+  const createdAt = image && image.createdAt ? Date.parse(image.createdAt) : null;
+  return {
+    id: image && image.id,
+    name: (image && image.name) || (image && image.id) || '(unnamed)',
+    runtime: (image && image.runtime) || null,
+    isolation: (image && image.isolation) || null,
+    scope: (image && image.scope) || null,
+    sizeEstimate: image && typeof image.sizeEstimate === 'number' ? image.sizeEstimate : null,
+    createdAt,
+    createdRel: createdAt != null && !Number.isNaN(createdAt)
+      ? formatLogTime(createdAt, now != null ? now : Date.now())
+      : null,
+  };
+}
+
 // Same shape as decorateTool for the size fields, so renderSizeBar accepts
 // either. The "name" field is the synthetic '__unattributed__' sentinel,
 // not displayed — main.js looks at the action name to know which compute
@@ -190,6 +208,8 @@ function renderApp(state, root) {
 
   root.appendChild(renderHeader(state));
   root.appendChild(renderToolList(state, decoratedTools, maxBytes));
+  const imageList = renderImageList(state);
+  if (imageList) root.appendChild(imageList);
   const ssCount = state.inspectResult.sessionStorage.length;
   if (hasUnattributed(state.detectResult.unattributed) || ssCount > 0) {
     root.appendChild(renderUnattributed(
@@ -203,11 +223,15 @@ function renderApp(state, root) {
 
 function renderHeader(state) {
   const { origin, detectResult, inspectResult } = state;
-  const summary = summaryStats(inspectResult, detectResult);
+  const summary = summaryStats(inspectResult, detectResult, state.images);
   const header = el('header', { class: 'hyper-header' });
   header.appendChild(el('h1', { text: `${origin} — GCU storage` }));
   const sub = el('p', { class: 'hyper-summary' });
   sub.appendChild(el('span', { text: `${summary.toolCount} tool${summary.toolCount === 1 ? '' : 's'} detected` }));
+  if (summary.imageCount > 0) {
+    sub.appendChild(el('span', { class: 'sep', text: ' · ' }));
+    sub.appendChild(el('span', { text: `${summary.imageCount} container${summary.imageCount === 1 ? '' : 's'}` }));
+  }
   sub.appendChild(el('span', { class: 'sep', text: ' · ' }));
   sub.appendChild(el('span', { text: `${formatBytes(summary.quotaUsed)} used` }));
   if (summary.quotaTotal != null) {
@@ -217,9 +241,10 @@ function renderHeader(state) {
   return header;
 }
 
-function summaryStats(inspectResult, detectResult) {
+function summaryStats(inspectResult, detectResult, images) {
   return {
     toolCount: detectResult.tools.length,
+    imageCount: (images || []).length,
     quotaUsed: inspectResult.estimate ? inspectResult.estimate.usage : null,
     quotaTotal: inspectResult.estimate ? inspectResult.estimate.quota : null,
   };
@@ -415,6 +440,67 @@ function cssToken(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 }
 
+function renderImageList(state) {
+  if (!state.images || state.images.length === 0) return null;
+  const list = el('section', { class: 'hyper-images' });
+  list.appendChild(el('h2', { text: `Containers (${state.images.length})` }));
+
+  // Group by runtime. Show runtime sub-headers only when more than one.
+  const byRuntime = new Map();
+  for (const img of state.images) {
+    const r = img.runtime || '(unknown)';
+    if (!byRuntime.has(r)) byRuntime.set(r, []);
+    byRuntime.get(r).push(img);
+  }
+  const showRuntimeHeaders = byRuntime.size > 1;
+
+  for (const [runtime, images] of byRuntime) {
+    if (showRuntimeHeaders) {
+      list.appendChild(el('h3', { class: 'hyper-images__runtime', text: runtime }));
+    }
+    for (const img of images) {
+      list.appendChild(renderImageRow(decorateImage(img)));
+    }
+  }
+  return list;
+}
+
+function renderImageRow(d) {
+  const row = el('article', { class: 'hyper-image', data: { image: d.id } });
+  const head = el('div', { class: 'hyper-image__head' });
+  head.appendChild(el('span', { class: 'hyper-image__name', text: d.name }));
+  if (d.isolation) {
+    head.appendChild(el('span', {
+      class: `hyper-image__iso hyper-image__iso--${d.isolation}`,
+      text: d.isolation,
+    }));
+  }
+  if (d.runtime) head.appendChild(el('span', { class: 'hyper-image__runtime', text: d.runtime }));
+  row.appendChild(head);
+
+  const meta = el('div', { class: 'hyper-image__meta' });
+  if (d.sizeEstimate != null) meta.appendChild(el('span', { text: formatBytes(d.sizeEstimate) }));
+  if (d.createdRel) meta.appendChild(el('span', { text: `created ${d.createdRel}` }));
+  if (d.scope) meta.appendChild(el('span', { class: 'hyper-image__scope', text: d.scope }));
+  row.appendChild(meta);
+
+  const actions = el('div', { class: 'hyper-tool__actions' });
+  if (d.scope) actions.appendChild(imageActionButton('Open', 'open-image', d.id));
+  actions.appendChild(imageActionButton('Reset', 'reset-image', d.id, 'danger'));
+  row.appendChild(actions);
+
+  return row;
+}
+
+function imageActionButton(label, action, imageId, variant) {
+  return el('button', {
+    text: label,
+    class: `hyper-btn${variant ? ` hyper-btn--${variant}` : ''}`,
+    data: { action, image: imageId },
+    attrs: { type: 'button' },
+  });
+}
+
 function renderUnattributed(unattributed, inspectResult, decoratedUnattributed, maxBytes) {
   const section = el('section', { class: 'hyper-unattributed' });
   section.appendChild(el('h2', { text: 'Unattributed storage' }));
@@ -597,6 +683,7 @@ if (typeof module !== 'undefined') {
     formatLogPayload,
     decorateTool,
     decorateUnattributed,
+    decorateImage,
     buildBarSegments,
     buildToolDetails,
     buildUnattributedDetails,

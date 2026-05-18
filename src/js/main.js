@@ -32,12 +32,14 @@ async function loadState() {
   const inspectResult = await inspectOrigin({ idbHints });
   const detectResult = detectTools(inspectResult.localStorage, toObserved(inspectResult));
   const { logs, warnings: logWarnings } = parseLogs(inspectResult.localStorage);
+  const { images, warnings: imageWarnings } = parseImages(inspectResult.localStorage);
   return {
     origin: typeof location !== 'undefined' ? location.origin : '',
     inspectResult,
     detectResult,
     logs,
-    logWarnings,
+    logWarnings: [...logWarnings, ...imageWarnings],
+    images,
   };
 }
 
@@ -47,12 +49,16 @@ async function onActionClick(e) {
   if (busy) return;
   const action = target.dataset.action;
   const toolName = target.dataset.tool || null;
+  const imageId = target.dataset.image || null;
   const tool = toolName
     ? currentState.detectResult.tools.find((t) => t.name === toolName)
     : null;
+  const image = imageId
+    ? (currentState.images || []).find((i) => i.id === imageId)
+    : null;
   busy = true;
   try {
-    const didMutate = await dispatch(action, tool);
+    const didMutate = await dispatch(action, tool, image);
     if (didMutate) await boot();
   } catch (err) {
     await messageDialog({
@@ -65,7 +71,7 @@ async function onActionClick(e) {
   }
 }
 
-async function dispatch(action, tool) {
+async function dispatch(action, tool, image) {
   switch (action) {
     case 'reset-tool': {
       if (!tool) return false;
@@ -111,6 +117,24 @@ async function dispatch(action, tool) {
     }
     case 'export-unattributed': {
       await exportUnattributed(currentState);
+      return false;
+    }
+    case 'reset-image': {
+      if (!image) return false;
+      const plan = planResetImage(image);
+      const ok = await confirmDialog({
+        title: `Reset container "${image.name}"?`,
+        body: `Will delete: ${describeImagePlan(plan)}. Other containers sharing this runtime's storage are not affected.`,
+        confirmLabel: 'Reset',
+        danger: true,
+      });
+      if (!ok) return false;
+      await resetImage(image);
+      return true;
+    }
+    case 'open-image': {
+      if (!image || !image.scope) return false;
+      window.open(image.scope, '_blank');
       return false;
     }
     case 'nuke': {

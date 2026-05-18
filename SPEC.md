@@ -328,6 +328,73 @@ The `name` field inside the value must match the suffix of the key (`gcu:tool:ep
 
 ---
 
+## The `gcu:img` container convention
+
+A second per-entity GCU namespace, parallel to `gcu:tool:*` but for *containers* (user-published runtime images, not first-party tools). The canonical producer is `gentropic/dd` — a PWA container runtime that publishes images on a static host. dd writes one marker per published image; hyper surfaces them as a separate "Containers" section with per-image actions.
+
+The split exists because the cleanup semantics are different: tools own whole IDBs and SW scopes; images own *records inside* a runtime's shared IDB, plus an optional SW scope. hyper has different cleanup verbs for each.
+
+**Where it lives:** `localStorage["gcu:img:<id>"]` — one JSON object per image, keyed by the image's id. hyper enumerates all keys matching `gcu:img:*`.
+
+**Shape (consumed by hyper):**
+
+```json
+{
+  "spec": 1,
+  "id": "<image-id>",
+  "name": "Hello dd",
+  "isolation": "trusted",
+  "runtime": "dd",
+  "scope": "/dd/c/<id>/",
+  "storageKeys": {
+    "idbDb": "gentropic-dd",
+    "idbImageStore": "images",
+    "idbImageKey": "<image-id>",
+    "idbStorageStore": "storage",
+    "idbStorageStorePrefix": "<image-id>:"
+  },
+  "createdAt": "2026-05-18T14:23:00Z",
+  "sizeEstimate": 142336
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `spec` | yes | Integer schema version. v1 is `1`. |
+| `id` | yes | Must match the key suffix (`gcu:img:abc` carries `"id": "abc"`). |
+| `name` | yes | Display name shown by hyper. |
+| `isolation` | no | `"trusted"` or `"strict"`. Shown as a badge if present. |
+| `runtime` | yes | The runtime that owns this image (e.g., `"dd"`). hyper groups images by runtime when multiple coexist. |
+| `scope` | no | URL scope of the container's SW registration. Used by the *Open* and *Reset* actions. |
+| `storageKeys.idbDb` | no | IDB database containing the image's records. |
+| `storageKeys.idbImageStore` | no | Store name within `idbDb` where the image record lives. |
+| `storageKeys.idbImageKey` | no | Primary key of the image record in that store. |
+| `storageKeys.idbStorageStore` | no | Store name where the image's runtime-side data lives. |
+| `storageKeys.idbStorageStorePrefix` | no | Key prefix in `idbStorageStore` matching all of the image's data. |
+| `createdAt` | no | ISO 8601 timestamp; shown as a relative age. |
+| `sizeEstimate` | no | Bytes estimate for the image; shown in the row. |
+
+The `storageKeys` block tells hyper exactly what to clean per image without needing runtime-specific knowledge. Each sub-field is independently optional, but a `Reset` that doesn't touch a category just leaves that data behind.
+
+**Cleanup semantics — different from tools:**
+
+- **Tool reset** → delete whole IDBs, clear caches by name, unregister SW scopes, remove LS keys by prefix.
+- **Image reset** → delete a *single IDB record* by key in one store, *scan-and-delete* records in another store by key prefix, unregister one SW scope, remove the `gcu:img:<id>` marker. Other images sharing the runtime's IDB are untouched.
+
+This needs new cleanup primitives in hyper: `deleteIdbRecord` and `deleteIdbRecordsByPrefix` (using `objectStore.openCursor` with `IDBKeyRange.bound(prefix, prefix + '￿', false, true)`).
+
+**Survival across hyper actions:**
+
+| Action          | Image preserved? |
+|-----------------|------------------|
+| Tool reset (for the owning runtime) | yes — tools don't own image records |
+| Image reset     | no — that's the whole point |
+| Nuke everything | no — the runtime's IDB goes too |
+
+**Note for dd implementers:** dd SPEC v0.1 §8.2 shows the marker without `storageKeys.idbStorageStore` (the store name where per-image scoped data lives). hyper requires this field to clean storage records — without it, scoped data is left orphaned in the runtime's DB. Recommend adding it to dd's marker. (dd's current schema has only one such store named `"storage"`, but the marker should be self-describing rather than make hyper hard-code dd's schema.)
+
+---
+
 ## The `gcu:log` diagnostic convention
 
 A lightweight complement to `gcu:tool`: tools that adopt it write a small bounded ring of diagnostic events to localStorage, which hyper surfaces in each tool's show-details section. Purely opt-in; tools that don't write logs simply have no log timeline in hyper.

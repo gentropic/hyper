@@ -6,6 +6,7 @@ const {
   formatLogPayload,
   decorateTool,
   decorateUnattributed,
+  decorateImage,
   buildBarSegments,
   buildToolDetails,
   buildUnattributedDetails,
@@ -242,6 +243,44 @@ test('decorateTool: missing inspect metadata is treated as zero', () => {
   const d = decorateTool(tool, inspectResult);
   assert.equal(d.cacheEntries, 0);
   assert.equal(d.idbRecords, 0);
+});
+
+test('decorateImage: extracts display fields with relative time', () => {
+  const image = {
+    id: 'abc',
+    name: 'Hello dd',
+    runtime: 'dd',
+    isolation: 'trusted',
+    scope: '/dd/c/abc/',
+    sizeEstimate: 12345,
+    createdAt: '2026-05-18T14:00:00Z',
+  };
+  const now = Date.parse('2026-05-18T17:00:00Z'); // 3h later
+  const d = decorateImage(image, now);
+  assert.equal(d.id, 'abc');
+  assert.equal(d.name, 'Hello dd');
+  assert.equal(d.runtime, 'dd');
+  assert.equal(d.isolation, 'trusted');
+  assert.equal(d.sizeEstimate, 12345);
+  assert.equal(d.createdRel, '3h ago');
+});
+
+test('decorateImage: handles missing optional fields', () => {
+  const d = decorateImage({ id: 'x', name: 'X', runtime: 'dd' });
+  assert.equal(d.isolation, null);
+  assert.equal(d.scope, null);
+  assert.equal(d.sizeEstimate, null);
+  assert.equal(d.createdRel, null);
+});
+
+test('decorateImage: missing name falls back to id', () => {
+  const d = decorateImage({ id: 'fallback', runtime: 'dd' });
+  assert.equal(d.name, 'fallback');
+});
+
+test('decorateImage: invalid createdAt → createdRel null', () => {
+  const d = decorateImage({ id: 'x', name: 'X', runtime: 'dd', createdAt: 'not a date' });
+  assert.equal(d.createdRel, null);
 });
 
 test('summaryStats: aggregates tool count and quota', () => {

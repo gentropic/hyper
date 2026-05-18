@@ -5,12 +5,16 @@ const {
   planForceRefresh,
   planNuke,
   planResetUnattributed,
+  planResetImage,
+  describeImagePlan,
   pickToolURL,
   describePlan,
   scopePath,
   clearCaches,
   unregisterScopes,
   deleteIdbs,
+  deleteIdbRecord,
+  deleteIdbRecordsByPrefix,
   clearLocalStorageKeys,
   clearSessionStorageKeys,
 } = require('../src/js/actions');
@@ -180,6 +184,64 @@ test('describePlan: every category present at once', () => {
     sessionStorageKeys: ['s1', 's2'],
   });
   assert.equal(text, '2 caches, 1 service worker, 3 IDB databases, 1 localStorage key, 2 sessionStorage keys');
+});
+
+// --- planResetImage / describeImagePlan -----------------------------------
+
+test('planResetImage: pulls fields from storageKeys + scope + _lsKey', () => {
+  const image = {
+    id: 'abc',
+    _lsKey: 'gcu:img:abc',
+    scope: '/dd/c/abc/',
+    storageKeys: {
+      idbDb: 'gentropic-dd',
+      idbImageStore: 'images',
+      idbImageKey: 'abc',
+      idbStorageStore: 'storage',
+      idbStorageStorePrefix: 'abc:',
+    },
+  };
+  const plan = planResetImage(image);
+  assert.equal(plan.lsKey, 'gcu:img:abc');
+  assert.equal(plan.idbDb, 'gentropic-dd');
+  assert.equal(plan.idbImageStore, 'images');
+  assert.equal(plan.idbImageKey, 'abc');
+  assert.equal(plan.idbStorageStore, 'storage');
+  assert.equal(plan.idbStorageStorePrefix, 'abc:');
+  assert.equal(plan.swScope, '/dd/c/abc/');
+});
+
+test('planResetImage: missing _lsKey falls back to gcu:img:<id>', () => {
+  const plan = planResetImage({ id: 'xyz', storageKeys: {} });
+  assert.equal(plan.lsKey, 'gcu:img:xyz');
+});
+
+test('planResetImage: missing image/storageKeys → all-null plan', () => {
+  const plan = planResetImage(null);
+  assert.equal(plan.lsKey, null);
+  assert.equal(plan.idbDb, null);
+});
+
+test('describeImagePlan: lists what will be deleted in human terms', () => {
+  const text = describeImagePlan({
+    lsKey: 'gcu:img:abc',
+    idbImageKey: 'abc',
+    idbStorageStorePrefix: 'abc:',
+    swScope: '/dd/c/abc/',
+  });
+  assert.equal(text, 'LS marker, IDB image record, all IDB storage entries, service worker registration');
+});
+
+test('describeImagePlan: empty plan → "nothing"', () => {
+  assert.equal(describeImagePlan({}), 'nothing');
+});
+
+test('deleteIdbRecord: returns false when indexedDB missing', async () => {
+  assert.equal(await deleteIdbRecord('db', 'store', 'key'), false);
+});
+
+test('deleteIdbRecordsByPrefix: returns 0 when indexedDB missing', async () => {
+  assert.equal(await deleteIdbRecordsByPrefix('db', 'store', 'prefix:'), 0);
 });
 
 // --- Graceful degradation when browser APIs are missing ------------------

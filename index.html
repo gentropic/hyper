@@ -292,6 +292,84 @@ h2 {
   background: transparent;
 }
 
+/* --- Containers (gcu:img) --- */
+
+.hyper-images { margin-top: 1.5rem; }
+.hyper-images__runtime {
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sw-text-soft);
+  margin: 1rem 0 0.5rem;
+}
+
+.hyper-image {
+  border: 1px solid var(--sw-border);
+  border-radius: var(--sw-radius-lg);
+  background: var(--sw-bg-raised);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.hyper-image__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+}
+.hyper-image__name {
+  font-family: var(--sw-sans);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--sw-text);
+}
+.hyper-image__runtime {
+  font-family: var(--sw-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--sw-text-soft);
+}
+
+/* Isolation badge — indigo=selected for trusted (default, lower stakes),
+ * amber=caution for strict (the sandboxed mode has constraints the user
+ * should be aware of when reading the row). */
+.hyper-image__iso {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--sw-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--sw-radius);
+}
+.hyper-image__iso::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.hyper-image__iso--trusted { background: var(--sw-indigo-soft); color: var(--sw-indigo); }
+.hyper-image__iso--strict  { background: var(--sw-amber-soft);  color: var(--sw-amber);  }
+
+.hyper-image__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.25rem;
+  font-family: var(--sw-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--sw-text-soft);
+  margin-bottom: 0.6rem;
+}
+.hyper-image__scope { color: var(--sw-text-mid); }
+
 /* --- Unattributed / Malformed --- */
 
 .hyper-unattributed,
@@ -508,6 +586,7 @@ const KNOWN_TOOL_NAMES = ['ep', 'calque', 'dee', 'plan', 'rv', 'gcu-press', 'bea
 
 const TOOL_KEY_RE = /^gcu:tool:(.*)$/;
 const LOG_KEY_RE = /^gcu:log:(.*)$/;
+const IMG_KEY_RE = /^gcu:img:(.*)$/;
 
 // 50 KB on disk = "your tool is clearly outside the spec'd ~25 KB worst case".
 // See SPEC §gcu:log "Strict caps".
@@ -711,6 +790,49 @@ function parseLogs(localStorageEntries) {
   return { logs, warnings };
 }
 
+// Parse the gcu:img:<id> markers per SPEC §gcu:img container convention.
+// Pure: input is localStorage entries, output is parsed images + warnings.
+// Each image carries a _lsKey field with its original LS key for cleanup.
+function parseImages(localStorageEntries) {
+  const images = [];
+  const warnings = [];
+  for (const [key, value] of localStorageEntries) {
+    const match = IMG_KEY_RE.exec(key);
+    if (!match) continue;
+    const suffix = match[1];
+    if (!suffix) {
+      warnings.push({ key, reason: 'empty image id' });
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      warnings.push({ key, reason: 'invalid JSON' });
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      warnings.push({ key, reason: 'announcement is not an object' });
+      continue;
+    }
+    const required = ['id', 'name', 'runtime'];
+    const missing = required.filter((f) => !parsed[f]);
+    if (missing.length) {
+      warnings.push({ key, reason: `missing required field(s): ${missing.join(', ')}` });
+      continue;
+    }
+    if (parsed.id !== suffix) {
+      warnings.push({
+        key,
+        reason: `id field "${parsed.id}" does not match key suffix "${suffix}"`,
+      });
+      continue;
+    }
+    images.push({ ...parsed, _lsKey: key });
+  }
+  return { images, warnings };
+}
+
 // Collect IDB names to probe when indexedDB.databases() isn't available
 // (older Safari, some WebViews). Combines announced IDBs from gcu:tool:*
 // markers with KNOWN_TOOL_NAMES as a best-effort fallback for tools that
@@ -723,10 +845,10 @@ function gatherIdbHints(localStorageEntries) {
 
 function detectTools(localStorageEntries, observed) {
   const { tools: announced, malformed } = parseAnnouncements(localStorageEntries);
-  // Strip gcu:tool:* and gcu:log:* keys from observed LS — they are hyper's
-  // own metadata, not tool data to be attributed.
+  // Strip gcu:tool:*, gcu:log:*, gcu:img:* keys from observed LS — they are
+  // hyper's own metadata, not tool data to be attributed.
   const lsForAttribution = (observed.localStorageKeys || []).filter(
-    (k) => !TOOL_KEY_RE.test(k) && !LOG_KEY_RE.test(k),
+    (k) => !TOOL_KEY_RE.test(k) && !LOG_KEY_RE.test(k) && !IMG_KEY_RE.test(k),
   );
   const observedForInference = { ...observed, localStorageKeys: lsForAttribution };
   const inferred = inferTools(observedForInference, announced.map((t) => t.name));
@@ -744,8 +866,10 @@ if (typeof module !== 'undefined') {
     KNOWN_TOOL_NAMES,
     TOOL_KEY_RE,
     LOG_KEY_RE,
+    IMG_KEY_RE,
     parseAnnouncements,
     parseLogs,
+    parseImages,
     inferTools,
     attribute,
     detectTools,
@@ -1312,6 +1436,31 @@ function planNuke(inspectResult) {
   };
 }
 
+// Per SPEC §gcu:img: an image owns a single IDB record plus a prefix-set of
+// records in another store, plus optionally a SW scope. Cleanup is per-record,
+// not per-database.
+function planResetImage(image) {
+  const sk = (image && image.storageKeys) || {};
+  return {
+    lsKey: image && image._lsKey ? image._lsKey : (image && image.id ? `gcu:img:${image.id}` : null),
+    idbDb: sk.idbDb || null,
+    idbImageStore: sk.idbImageStore || null,
+    idbImageKey: sk.idbImageKey || null,
+    idbStorageStore: sk.idbStorageStore || null,
+    idbStorageStorePrefix: sk.idbStorageStorePrefix || null,
+    swScope: (image && image.scope) || null,
+  };
+}
+
+function describeImagePlan(plan) {
+  const parts = [];
+  if (plan.lsKey) parts.push('LS marker');
+  if (plan.idbImageKey) parts.push('IDB image record');
+  if (plan.idbStorageStorePrefix) parts.push('all IDB storage entries');
+  if (plan.swScope) parts.push('service worker registration');
+  return parts.length ? parts.join(', ') : 'nothing';
+}
+
 // Includes all of sessionStorage because no tool announces ownership of SS
 // keys — anything in SS is implicitly unattributed.
 function planResetUnattributed(detectResult, inspectResult) {
@@ -1413,6 +1562,66 @@ function deleteIdb(name) {
   });
 }
 
+// Delete a single record from an IDB store, by key. Used for per-image
+// cleanup where we want to leave other records in the store intact.
+function deleteIdbRecord(dbName, storeName, key) {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') { resolve(false); return; }
+    const openReq = indexedDB.open(dbName);
+    openReq.onerror = () => resolve(false);
+    openReq.onblocked = () => resolve(false);
+    openReq.onsuccess = () => {
+      const db = openReq.result;
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const delReq = tx.objectStore(storeName).delete(key);
+        delReq.onsuccess = () => { db.close(); resolve(true); };
+        delReq.onerror = () => { db.close(); resolve(false); };
+      } catch {
+        db.close();
+        resolve(false);
+      }
+    };
+  });
+}
+
+// Walk an IDB store with a key range bounded by prefix, deleting each match.
+// Returns the count of records deleted. The upper bound uses U+FFFF as a
+// sentinel — any string starting with prefix sorts before prefix+'￿'.
+function deleteIdbRecordsByPrefix(dbName, storeName, prefix) {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') { resolve(0); return; }
+    const openReq = indexedDB.open(dbName);
+    openReq.onerror = () => resolve(0);
+    openReq.onblocked = () => resolve(0);
+    openReq.onsuccess = () => {
+      const db = openReq.result;
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        const range = IDBKeyRange.bound(prefix, prefix + '￿', false, true);
+        const cursorReq = store.openCursor(range);
+        let count = 0;
+        cursorReq.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (cursor) {
+            cursor.delete();
+            count++;
+            cursor.continue();
+          } else {
+            db.close();
+            resolve(count);
+          }
+        };
+        cursorReq.onerror = () => { db.close(); resolve(count); };
+      } catch {
+        db.close();
+        resolve(0);
+      }
+    };
+  });
+}
+
 function clearLocalStorageKeys(keys) {
   if (typeof localStorage === 'undefined') return { cleared: [] };
   return clearStorageKeys(localStorage, keys);
@@ -1470,6 +1679,35 @@ async function refreshAllTools(detectResult) {
   return { results };
 }
 
+async function resetImage(image) {
+  const plan = planResetImage(image);
+  const result = {
+    lsKeyRemoved: null,
+    imageRecordDeleted: false,
+    storageRecordsDeleted: 0,
+    swUnregistered: [],
+  };
+  if (plan.lsKey && typeof localStorage !== 'undefined') {
+    if (localStorage.getItem(plan.lsKey) !== null) {
+      localStorage.removeItem(plan.lsKey);
+      result.lsKeyRemoved = plan.lsKey;
+    }
+  }
+  if (plan.idbDb && plan.idbImageStore && plan.idbImageKey != null) {
+    result.imageRecordDeleted = await deleteIdbRecord(plan.idbDb, plan.idbImageStore, plan.idbImageKey);
+  }
+  if (plan.idbDb && plan.idbStorageStore && plan.idbStorageStorePrefix) {
+    result.storageRecordsDeleted = await deleteIdbRecordsByPrefix(
+      plan.idbDb, plan.idbStorageStore, plan.idbStorageStorePrefix,
+    );
+  }
+  if (plan.swScope) {
+    const { unregistered } = await unregisterScopes([plan.swScope]);
+    result.swUnregistered = unregistered;
+  }
+  return result;
+}
+
 async function resetUnattributed(detectResult, inspectResult) {
   const plan = planResetUnattributed(detectResult, inspectResult);
   const [c, s, i, l, ss] = await Promise.all([
@@ -1500,18 +1738,23 @@ if (typeof module !== 'undefined') {
     planForceRefresh,
     planNuke,
     planResetUnattributed,
+    planResetImage,
+    describeImagePlan,
     pickToolURL,
     describePlan,
     scopePath,
     clearCaches,
     unregisterScopes,
     deleteIdbs,
+    deleteIdbRecord,
+    deleteIdbRecordsByPrefix,
     clearLocalStorageKeys,
     clearSessionStorageKeys,
     resetTool,
     forceRefreshTool,
     refreshAllTools,
     resetUnattributed,
+    resetImage,
     nukeOrigin,
   };
 }
@@ -1580,6 +1823,24 @@ function crossReferenceStorage(claim, inspectResult) {
 // browser globals at top-level via async functions). Cheap and pure.
 function normalizeScope(scope) {
   try { return new URL(scope).pathname; } catch { return scope; }
+}
+
+// Pure: shape an image marker for display. createdRel is a relative-time
+// string derived against `now` (injectable for tests).
+function decorateImage(image, now) {
+  const createdAt = image && image.createdAt ? Date.parse(image.createdAt) : null;
+  return {
+    id: image && image.id,
+    name: (image && image.name) || (image && image.id) || '(unnamed)',
+    runtime: (image && image.runtime) || null,
+    isolation: (image && image.isolation) || null,
+    scope: (image && image.scope) || null,
+    sizeEstimate: image && typeof image.sizeEstimate === 'number' ? image.sizeEstimate : null,
+    createdAt,
+    createdRel: createdAt != null && !Number.isNaN(createdAt)
+      ? formatLogTime(createdAt, now != null ? now : Date.now())
+      : null,
+  };
 }
 
 // Same shape as decorateTool for the size fields, so renderSizeBar accepts
@@ -1708,6 +1969,8 @@ function renderApp(state, root) {
 
   root.appendChild(renderHeader(state));
   root.appendChild(renderToolList(state, decoratedTools, maxBytes));
+  const imageList = renderImageList(state);
+  if (imageList) root.appendChild(imageList);
   const ssCount = state.inspectResult.sessionStorage.length;
   if (hasUnattributed(state.detectResult.unattributed) || ssCount > 0) {
     root.appendChild(renderUnattributed(
@@ -1721,11 +1984,15 @@ function renderApp(state, root) {
 
 function renderHeader(state) {
   const { origin, detectResult, inspectResult } = state;
-  const summary = summaryStats(inspectResult, detectResult);
+  const summary = summaryStats(inspectResult, detectResult, state.images);
   const header = el('header', { class: 'hyper-header' });
   header.appendChild(el('h1', { text: `${origin} — GCU storage` }));
   const sub = el('p', { class: 'hyper-summary' });
   sub.appendChild(el('span', { text: `${summary.toolCount} tool${summary.toolCount === 1 ? '' : 's'} detected` }));
+  if (summary.imageCount > 0) {
+    sub.appendChild(el('span', { class: 'sep', text: ' · ' }));
+    sub.appendChild(el('span', { text: `${summary.imageCount} container${summary.imageCount === 1 ? '' : 's'}` }));
+  }
   sub.appendChild(el('span', { class: 'sep', text: ' · ' }));
   sub.appendChild(el('span', { text: `${formatBytes(summary.quotaUsed)} used` }));
   if (summary.quotaTotal != null) {
@@ -1735,9 +2002,10 @@ function renderHeader(state) {
   return header;
 }
 
-function summaryStats(inspectResult, detectResult) {
+function summaryStats(inspectResult, detectResult, images) {
   return {
     toolCount: detectResult.tools.length,
+    imageCount: (images || []).length,
     quotaUsed: inspectResult.estimate ? inspectResult.estimate.usage : null,
     quotaTotal: inspectResult.estimate ? inspectResult.estimate.quota : null,
   };
@@ -1933,6 +2201,67 @@ function cssToken(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 }
 
+function renderImageList(state) {
+  if (!state.images || state.images.length === 0) return null;
+  const list = el('section', { class: 'hyper-images' });
+  list.appendChild(el('h2', { text: `Containers (${state.images.length})` }));
+
+  // Group by runtime. Show runtime sub-headers only when more than one.
+  const byRuntime = new Map();
+  for (const img of state.images) {
+    const r = img.runtime || '(unknown)';
+    if (!byRuntime.has(r)) byRuntime.set(r, []);
+    byRuntime.get(r).push(img);
+  }
+  const showRuntimeHeaders = byRuntime.size > 1;
+
+  for (const [runtime, images] of byRuntime) {
+    if (showRuntimeHeaders) {
+      list.appendChild(el('h3', { class: 'hyper-images__runtime', text: runtime }));
+    }
+    for (const img of images) {
+      list.appendChild(renderImageRow(decorateImage(img)));
+    }
+  }
+  return list;
+}
+
+function renderImageRow(d) {
+  const row = el('article', { class: 'hyper-image', data: { image: d.id } });
+  const head = el('div', { class: 'hyper-image__head' });
+  head.appendChild(el('span', { class: 'hyper-image__name', text: d.name }));
+  if (d.isolation) {
+    head.appendChild(el('span', {
+      class: `hyper-image__iso hyper-image__iso--${d.isolation}`,
+      text: d.isolation,
+    }));
+  }
+  if (d.runtime) head.appendChild(el('span', { class: 'hyper-image__runtime', text: d.runtime }));
+  row.appendChild(head);
+
+  const meta = el('div', { class: 'hyper-image__meta' });
+  if (d.sizeEstimate != null) meta.appendChild(el('span', { text: formatBytes(d.sizeEstimate) }));
+  if (d.createdRel) meta.appendChild(el('span', { text: `created ${d.createdRel}` }));
+  if (d.scope) meta.appendChild(el('span', { class: 'hyper-image__scope', text: d.scope }));
+  row.appendChild(meta);
+
+  const actions = el('div', { class: 'hyper-tool__actions' });
+  if (d.scope) actions.appendChild(imageActionButton('Open', 'open-image', d.id));
+  actions.appendChild(imageActionButton('Reset', 'reset-image', d.id, 'danger'));
+  row.appendChild(actions);
+
+  return row;
+}
+
+function imageActionButton(label, action, imageId, variant) {
+  return el('button', {
+    text: label,
+    class: `hyper-btn${variant ? ` hyper-btn--${variant}` : ''}`,
+    data: { action, image: imageId },
+    attrs: { type: 'button' },
+  });
+}
+
 function renderUnattributed(unattributed, inspectResult, decoratedUnattributed, maxBytes) {
   const section = el('section', { class: 'hyper-unattributed' });
   section.appendChild(el('h2', { text: 'Unattributed storage' }));
@@ -2115,6 +2444,7 @@ if (typeof module !== 'undefined') {
     formatLogPayload,
     decorateTool,
     decorateUnattributed,
+    decorateImage,
     buildBarSegments,
     buildToolDetails,
     buildUnattributedDetails,
@@ -2158,12 +2488,14 @@ async function loadState() {
   const inspectResult = await inspectOrigin({ idbHints });
   const detectResult = detectTools(inspectResult.localStorage, toObserved(inspectResult));
   const { logs, warnings: logWarnings } = parseLogs(inspectResult.localStorage);
+  const { images, warnings: imageWarnings } = parseImages(inspectResult.localStorage);
   return {
     origin: typeof location !== 'undefined' ? location.origin : '',
     inspectResult,
     detectResult,
     logs,
-    logWarnings,
+    logWarnings: [...logWarnings, ...imageWarnings],
+    images,
   };
 }
 
@@ -2173,12 +2505,16 @@ async function onActionClick(e) {
   if (busy) return;
   const action = target.dataset.action;
   const toolName = target.dataset.tool || null;
+  const imageId = target.dataset.image || null;
   const tool = toolName
     ? currentState.detectResult.tools.find((t) => t.name === toolName)
     : null;
+  const image = imageId
+    ? (currentState.images || []).find((i) => i.id === imageId)
+    : null;
   busy = true;
   try {
-    const didMutate = await dispatch(action, tool);
+    const didMutate = await dispatch(action, tool, image);
     if (didMutate) await boot();
   } catch (err) {
     await messageDialog({
@@ -2191,7 +2527,7 @@ async function onActionClick(e) {
   }
 }
 
-async function dispatch(action, tool) {
+async function dispatch(action, tool, image) {
   switch (action) {
     case 'reset-tool': {
       if (!tool) return false;
@@ -2237,6 +2573,24 @@ async function dispatch(action, tool) {
     }
     case 'export-unattributed': {
       await exportUnattributed(currentState);
+      return false;
+    }
+    case 'reset-image': {
+      if (!image) return false;
+      const plan = planResetImage(image);
+      const ok = await confirmDialog({
+        title: `Reset container "${image.name}"?`,
+        body: `Will delete: ${describeImagePlan(plan)}. Other containers sharing this runtime's storage are not affected.`,
+        confirmLabel: 'Reset',
+        danger: true,
+      });
+      if (!ok) return false;
+      await resetImage(image);
+      return true;
+    }
+    case 'open-image': {
+      if (!image || !image.scope) return false;
+      window.open(image.scope, '_blank');
       return false;
     }
     case 'nuke': {

@@ -9,6 +9,7 @@ const KNOWN_TOOL_NAMES = ['ep', 'calque', 'dee', 'plan', 'rv', 'gcu-press', 'bea
 
 const TOOL_KEY_RE = /^gcu:tool:(.*)$/;
 const LOG_KEY_RE = /^gcu:log:(.*)$/;
+const IMG_KEY_RE = /^gcu:img:(.*)$/;
 
 // 50 KB on disk = "your tool is clearly outside the spec'd ~25 KB worst case".
 // See SPEC §gcu:log "Strict caps".
@@ -212,6 +213,49 @@ function parseLogs(localStorageEntries) {
   return { logs, warnings };
 }
 
+// Parse the gcu:img:<id> markers per SPEC §gcu:img container convention.
+// Pure: input is localStorage entries, output is parsed images + warnings.
+// Each image carries a _lsKey field with its original LS key for cleanup.
+function parseImages(localStorageEntries) {
+  const images = [];
+  const warnings = [];
+  for (const [key, value] of localStorageEntries) {
+    const match = IMG_KEY_RE.exec(key);
+    if (!match) continue;
+    const suffix = match[1];
+    if (!suffix) {
+      warnings.push({ key, reason: 'empty image id' });
+      continue;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      warnings.push({ key, reason: 'invalid JSON' });
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      warnings.push({ key, reason: 'announcement is not an object' });
+      continue;
+    }
+    const required = ['id', 'name', 'runtime'];
+    const missing = required.filter((f) => !parsed[f]);
+    if (missing.length) {
+      warnings.push({ key, reason: `missing required field(s): ${missing.join(', ')}` });
+      continue;
+    }
+    if (parsed.id !== suffix) {
+      warnings.push({
+        key,
+        reason: `id field "${parsed.id}" does not match key suffix "${suffix}"`,
+      });
+      continue;
+    }
+    images.push({ ...parsed, _lsKey: key });
+  }
+  return { images, warnings };
+}
+
 // Collect IDB names to probe when indexedDB.databases() isn't available
 // (older Safari, some WebViews). Combines announced IDBs from gcu:tool:*
 // markers with KNOWN_TOOL_NAMES as a best-effort fallback for tools that
@@ -224,10 +268,10 @@ function gatherIdbHints(localStorageEntries) {
 
 function detectTools(localStorageEntries, observed) {
   const { tools: announced, malformed } = parseAnnouncements(localStorageEntries);
-  // Strip gcu:tool:* and gcu:log:* keys from observed LS — they are hyper's
-  // own metadata, not tool data to be attributed.
+  // Strip gcu:tool:*, gcu:log:*, gcu:img:* keys from observed LS — they are
+  // hyper's own metadata, not tool data to be attributed.
   const lsForAttribution = (observed.localStorageKeys || []).filter(
-    (k) => !TOOL_KEY_RE.test(k) && !LOG_KEY_RE.test(k),
+    (k) => !TOOL_KEY_RE.test(k) && !LOG_KEY_RE.test(k) && !IMG_KEY_RE.test(k),
   );
   const observedForInference = { ...observed, localStorageKeys: lsForAttribution };
   const inferred = inferTools(observedForInference, announced.map((t) => t.name));
@@ -245,8 +289,10 @@ if (typeof module !== 'undefined') {
     KNOWN_TOOL_NAMES,
     TOOL_KEY_RE,
     LOG_KEY_RE,
+    IMG_KEY_RE,
     parseAnnouncements,
     parseLogs,
+    parseImages,
     inferTools,
     attribute,
     detectTools,

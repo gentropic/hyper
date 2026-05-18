@@ -40,6 +40,31 @@ function planNuke(inspectResult) {
   };
 }
 
+// Per SPEC §gcu:img: an image owns a single IDB record plus a prefix-set of
+// records in another store, plus optionally a SW scope. Cleanup is per-record,
+// not per-database.
+function planResetImage(image) {
+  const sk = (image && image.storageKeys) || {};
+  return {
+    lsKey: image && image._lsKey ? image._lsKey : (image && image.id ? `gcu:img:${image.id}` : null),
+    idbDb: sk.idbDb || null,
+    idbImageStore: sk.idbImageStore || null,
+    idbImageKey: sk.idbImageKey || null,
+    idbStorageStore: sk.idbStorageStore || null,
+    idbStorageStorePrefix: sk.idbStorageStorePrefix || null,
+    swScope: (image && image.scope) || null,
+  };
+}
+
+function describeImagePlan(plan) {
+  const parts = [];
+  if (plan.lsKey) parts.push('LS marker');
+  if (plan.idbImageKey) parts.push('IDB image record');
+  if (plan.idbStorageStorePrefix) parts.push('all IDB storage entries');
+  if (plan.swScope) parts.push('service worker registration');
+  return parts.length ? parts.join(', ') : 'nothing';
+}
+
 // Includes all of sessionStorage because no tool announces ownership of SS
 // keys — anything in SS is implicitly unattributed.
 function planResetUnattributed(detectResult, inspectResult) {
@@ -141,6 +166,66 @@ function deleteIdb(name) {
   });
 }
 
+// Delete a single record from an IDB store, by key. Used for per-image
+// cleanup where we want to leave other records in the store intact.
+function deleteIdbRecord(dbName, storeName, key) {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') { resolve(false); return; }
+    const openReq = indexedDB.open(dbName);
+    openReq.onerror = () => resolve(false);
+    openReq.onblocked = () => resolve(false);
+    openReq.onsuccess = () => {
+      const db = openReq.result;
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const delReq = tx.objectStore(storeName).delete(key);
+        delReq.onsuccess = () => { db.close(); resolve(true); };
+        delReq.onerror = () => { db.close(); resolve(false); };
+      } catch {
+        db.close();
+        resolve(false);
+      }
+    };
+  });
+}
+
+// Walk an IDB store with a key range bounded by prefix, deleting each match.
+// Returns the count of records deleted. The upper bound uses U+FFFF as a
+// sentinel — any string starting with prefix sorts before prefix+'￿'.
+function deleteIdbRecordsByPrefix(dbName, storeName, prefix) {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') { resolve(0); return; }
+    const openReq = indexedDB.open(dbName);
+    openReq.onerror = () => resolve(0);
+    openReq.onblocked = () => resolve(0);
+    openReq.onsuccess = () => {
+      const db = openReq.result;
+      try {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        const range = IDBKeyRange.bound(prefix, prefix + '￿', false, true);
+        const cursorReq = store.openCursor(range);
+        let count = 0;
+        cursorReq.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (cursor) {
+            cursor.delete();
+            count++;
+            cursor.continue();
+          } else {
+            db.close();
+            resolve(count);
+          }
+        };
+        cursorReq.onerror = () => { db.close(); resolve(count); };
+      } catch {
+        db.close();
+        resolve(0);
+      }
+    };
+  });
+}
+
 function clearLocalStorageKeys(keys) {
   if (typeof localStorage === 'undefined') return { cleared: [] };
   return clearStorageKeys(localStorage, keys);
@@ -198,6 +283,35 @@ async function refreshAllTools(detectResult) {
   return { results };
 }
 
+async function resetImage(image) {
+  const plan = planResetImage(image);
+  const result = {
+    lsKeyRemoved: null,
+    imageRecordDeleted: false,
+    storageRecordsDeleted: 0,
+    swUnregistered: [],
+  };
+  if (plan.lsKey && typeof localStorage !== 'undefined') {
+    if (localStorage.getItem(plan.lsKey) !== null) {
+      localStorage.removeItem(plan.lsKey);
+      result.lsKeyRemoved = plan.lsKey;
+    }
+  }
+  if (plan.idbDb && plan.idbImageStore && plan.idbImageKey != null) {
+    result.imageRecordDeleted = await deleteIdbRecord(plan.idbDb, plan.idbImageStore, plan.idbImageKey);
+  }
+  if (plan.idbDb && plan.idbStorageStore && plan.idbStorageStorePrefix) {
+    result.storageRecordsDeleted = await deleteIdbRecordsByPrefix(
+      plan.idbDb, plan.idbStorageStore, plan.idbStorageStorePrefix,
+    );
+  }
+  if (plan.swScope) {
+    const { unregistered } = await unregisterScopes([plan.swScope]);
+    result.swUnregistered = unregistered;
+  }
+  return result;
+}
+
 async function resetUnattributed(detectResult, inspectResult) {
   const plan = planResetUnattributed(detectResult, inspectResult);
   const [c, s, i, l, ss] = await Promise.all([
@@ -228,18 +342,23 @@ if (typeof module !== 'undefined') {
     planForceRefresh,
     planNuke,
     planResetUnattributed,
+    planResetImage,
+    describeImagePlan,
     pickToolURL,
     describePlan,
     scopePath,
     clearCaches,
     unregisterScopes,
     deleteIdbs,
+    deleteIdbRecord,
+    deleteIdbRecordsByPrefix,
     clearLocalStorageKeys,
     clearSessionStorageKeys,
     resetTool,
     forceRefreshTool,
     refreshAllTools,
     resetUnattributed,
+    resetImage,
     nukeOrigin,
   };
 }

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   parseAnnouncements,
   parseLogs,
+  parseImages,
   inferTools,
   attribute,
   detectTools,
@@ -355,14 +356,86 @@ test('parseLogs: schema field defaults to 1 when missing', () => {
   assert.equal(r.logs.get('ep').schema, 1);
 });
 
-test('detectTools: gcu:log:* keys never leak into unattributed', () => {
+// --- parseImages -------------------------------------------------------
+
+test('parseImages: empty input → empty result', () => {
+  const r = parseImages([]);
+  assert.equal(r.images.length, 0);
+  assert.equal(r.warnings.length, 0);
+});
+
+test('parseImages: valid image parsed with _lsKey preserved', () => {
+  const value = JSON.stringify({
+    spec: 1,
+    id: 'abc-123',
+    name: 'Hello dd',
+    runtime: 'dd',
+    scope: '/dd/c/abc-123/',
+    isolation: 'trusted',
+    storageKeys: { idbDb: 'gentropic-dd', idbImageKey: 'abc-123' },
+  });
+  const r = parseImages([['gcu:img:abc-123', value]]);
+  assert.equal(r.warnings.length, 0);
+  assert.equal(r.images.length, 1);
+  assert.equal(r.images[0].id, 'abc-123');
+  assert.equal(r.images[0].name, 'Hello dd');
+  assert.equal(r.images[0].runtime, 'dd');
+  assert.equal(r.images[0]._lsKey, 'gcu:img:abc-123');
+});
+
+test('parseImages: ignores non-gcu:img keys', () => {
+  const r = parseImages([
+    ['gcu:tool:dd', '{}'],
+    ['gcu:log:dd', '{}'],
+    ['gcu:img:x', JSON.stringify({ id: 'x', name: 'X', runtime: 'dd' })],
+  ]);
+  assert.equal(r.images.length, 1);
+  assert.equal(r.images[0].id, 'x');
+});
+
+test('parseImages: empty id suffix → warning', () => {
+  const r = parseImages([['gcu:img:', JSON.stringify({ id: '', name: 'x', runtime: 'dd' })]]);
+  assert.equal(r.images.length, 0);
+  assert.match(r.warnings[0].reason, /empty image id/);
+});
+
+test('parseImages: invalid JSON → warning', () => {
+  const r = parseImages([['gcu:img:x', '{not json']]);
+  assert.equal(r.images.length, 0);
+  assert.match(r.warnings[0].reason, /invalid JSON/);
+});
+
+test('parseImages: missing required fields → warning lists them', () => {
+  const r = parseImages([['gcu:img:x', JSON.stringify({ id: 'x' })]]);
+  assert.equal(r.images.length, 0);
+  assert.match(r.warnings[0].reason, /name.*runtime/);
+});
+
+test('parseImages: id mismatch with key suffix → warning', () => {
+  const r = parseImages([
+    ['gcu:img:foo', JSON.stringify({ id: 'bar', name: 'x', runtime: 'dd' })],
+  ]);
+  assert.equal(r.images.length, 0);
+  assert.match(r.warnings[0].reason, /does not match/);
+});
+
+test('parseImages: multiple valid images', () => {
+  const a = JSON.stringify({ id: 'a', name: 'A', runtime: 'dd' });
+  const b = JSON.stringify({ id: 'b', name: 'B', runtime: 'dd' });
+  const r = parseImages([['gcu:img:a', a], ['gcu:img:b', b]]);
+  assert.equal(r.images.length, 2);
+  assert.deepEqual(r.images.map((i) => i.id).sort(), ['a', 'b']);
+});
+
+test('detectTools: gcu:log:* and gcu:img:* keys never leak into unattributed', () => {
   const lsEntries = [
     ['gcu:tool:ep', JSON.stringify({ name: 'ep' })],
     ['gcu:log:ep', JSON.stringify({ entries: [] })],
+    ['gcu:img:abc', JSON.stringify({ id: 'abc', name: 'X', runtime: 'dd' })],
   ];
   const observed = {
     cacheNames: [], idbNames: [],
-    localStorageKeys: ['gcu:tool:ep', 'gcu:log:ep'],
+    localStorageKeys: ['gcu:tool:ep', 'gcu:log:ep', 'gcu:img:abc'],
     swScopes: [],
   };
   const { unattributed } = detectTools(lsEntries, observed);
